@@ -1,0 +1,23 @@
+name: Deploy Worker
+
+on:
+  push:
+    branches:
+      - main  # 當你 push 到 main 分支時觸發
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          secrets: |
+            SHOPIFY_TOKEN
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
