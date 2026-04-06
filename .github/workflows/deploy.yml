@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main  # 當你 push 到 main 分支時觸發
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -19,7 +20,7 @@ jobs:
           secrets: |
             SHOPIFY_TOKEN
           # 關鍵：告訴 GitHub 虛擬機安裝跟妳本地一樣的 v4 版本
-          wranglerVersion: "4.8.0" 
+          wranglerVersion: "4.80.0" 
           # 明確指定設定檔
           command: deploy --config wrangler.jsonc
         env:
