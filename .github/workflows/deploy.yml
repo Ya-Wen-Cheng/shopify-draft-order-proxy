@@ -1,4 +1,4 @@
-name: Deploy Worker
+name: Deploy Workers
 
 on:
   push:
@@ -13,16 +13,26 @@ jobs:
       - name: Checkout Repo
         uses: actions/checkout@v4
 
-      - name: Deploy to Cloudflare
+      - name: Deploy draft-order worker
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           secrets: |
             SHOPIFY_TOKEN
-          # 關鍵：告訴 GitHub 虛擬機安裝跟妳本地一樣的 v4 版本
-          wranglerVersion: "4.80.0" 
-          # 明確指定設定檔
+          wranglerVersion: "4.80.0"
           command: deploy --config wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
+
+      - name: Deploy payment-methods worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          secrets: |
+            SHOPIFY_TOKEN
+          wranglerVersion: "4.80.0"
+          command: deploy --config payment-methods/wrangler.jsonc
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
