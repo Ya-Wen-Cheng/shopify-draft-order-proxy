@@ -4,6 +4,7 @@
  * Routes:
  *   GET  /?id={draft_order_id}      → fetch a draft order
  *   PUT  /?id={id}&action=complete  → complete a draft order → real order
+ *   POST /?action=add-address       → add address to customer profile
  *   POST /                          → create a draft order from cart
  */
 
@@ -66,6 +67,63 @@ export default {
         });
         const data = await res.json();
         return json(data, res.status);
+      } catch (err) {
+        return json({ error: err.message }, 500);
+      }
+    }
+
+    // ── POST /?action=add-address — add address to customer profile ──────
+    if (request.method === 'POST' && action === 'add-address') {
+      try {
+        const body = await request.json();
+        const { customerId, address } = body;
+
+        if (!customerId || !address || !address.address1) {
+          return json({ error: 'Missing customerId or address' }, 400);
+        }
+
+        const mutation = `
+          mutation customerUpdate($input: CustomerInput!) {
+            customerUpdate(input: $input) {
+              customer { id }
+              userErrors { field message }
+            }
+          }
+        `;
+
+        const variables = {
+          input: {
+            id: `gid://shopify/Customer/${customerId}`,
+            addresses: [{
+              address1: address.address1,
+              address2: address.address2 || '',
+              city: address.city || '',
+              province: address.province || '',
+              country: address.country || '',
+              zip: address.zip || '',
+              firstName: address.firstName || '',
+              lastName: address.lastName || '',
+              phone: address.phone || '',
+            }],
+          },
+        };
+
+        const res = await fetch(`${restBase}/graphql.json`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': token,
+          },
+          body: JSON.stringify({ query: mutation, variables }),
+        });
+
+        const result = await res.json();
+        const userErrors = result?.data?.customerUpdate?.userErrors;
+        if (userErrors && userErrors.length > 0) {
+          return json({ error: userErrors[0].message, userErrors }, 422);
+        }
+
+        return json({ success: true, data: result.data });
       } catch (err) {
         return json({ error: err.message }, 500);
       }
