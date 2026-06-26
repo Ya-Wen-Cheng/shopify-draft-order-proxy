@@ -7,6 +7,19 @@
 // ── Private helpers ──────────────────────────────────────────────────────────
 
 /**
+ * Escape user-supplied strings before interpolating into HTML to prevent XSS.
+ */
+function escHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Format an ISO timestamp (or any Date-parseable string) to "Jun 26, 2026".
  * Falls back to today's date if the input is null/undefined/invalid.
  */
@@ -42,12 +55,12 @@ function parseNote(note) {
 
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed.startsWith('Payment method:')) {
-      paymentMethod = trimmed.replace(/^Payment method:\s*/i, '').trim();
-    } else if (trimmed.startsWith('Promo code:')) {
-      promoCode = trimmed.replace(/^Promo code:\s*/i, '').trim();
+    if (/^payment method:/i.test(trimmed)) {
+      paymentMethod = trimmed.replace(/^payment method:\s*/i, '').trim();
+    } else if (/^promo code:/i.test(trimmed)) {
+      promoCode = trimmed.replace(/^promo code:\s*/i, '').trim();
     } else {
-      instructionLines.push(line);
+      instructionLines.push(trimmed);
     }
   }
 
@@ -99,6 +112,9 @@ export function buildOrderEmailHtml(draftOrder) {
   const orderDate  = formatDate(order.created_at);
   const currentYear = new Date().getFullYear();
 
+  // Fix 5: pluralization helper used in meta chips, section heading, subtotal row
+  const itemsLabel = totalQty === 1 ? '1 item' : `${totalQty} items`;
+
   // ── Section builders ─────────────────────────────────────────────────────
 
   // 3. Delivery banner — omit entirely when no shipping_line
@@ -108,7 +124,7 @@ export function buildOrderEmailHtml(draftOrder) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
       </div>
       <div class="delivery-banner__text">
-        <b>${shippingLine.title || 'Standard Shipping'}</b>
+        <b>${escHtml(shippingLine.title) || 'Standard Shipping'}</b>
         <span>Delivery in 3–5 business days</span>
       </div>
     </div>` : '';
@@ -119,13 +135,13 @@ export function buildOrderEmailHtml(draftOrder) {
     const unitPrice = parseFloat(item.price) || 0;
     const lineTotal = (unitPrice * qty).toFixed(2);
     const varHtml   = item.variant_title
-      ? `<div class="item-var">${item.variant_title}</div>`
+      ? `<div class="item-var">${escHtml(item.variant_title)}</div>`
       : '';
 
     return `
       <div class="item-row">
         <div class="item-info">
-          <div class="item-name">${item.title || ''}</div>
+          <div class="item-name">${escHtml(item.title)}</div>
           ${varHtml}
         </div>
         <div class="item-qty">× ${qty}</div>
@@ -133,14 +149,12 @@ export function buildOrderEmailHtml(draftOrder) {
       </div>`;
   }).join('');
 
-  // 5. Delivery address lines (skip empty fields)
-  const address2Html = addr.address2
-    ? `${addr.address2}<br>`
-    : '';
-  const cityProvZip  = [addr.city, addr.province, addr.zip].filter(Boolean).join(', ');
-  const phoneHtml    = addr.phone
-    ? `${addr.phone}<br>`
-    : '';
+  // 5. Delivery address lines (skip empty fields, escape all user data)
+  const address1Html = addr.address1 ? `${escHtml(addr.address1)}<br>` : '';
+  const address2Html = addr.address2 ? `${escHtml(addr.address2)}<br>` : '';
+  const cityProvZip  = [addr.city, addr.province, addr.zip].filter(Boolean).map(escHtml).join(', ');
+  const countryHtml  = addr.country  ? `${escHtml(addr.country)}<br>`  : '';
+  const phoneHtml    = addr.phone    ? `${escHtml(addr.phone)}<br>`    : '';
 
   // Payment method chip
   const payChipHtml = payChip
@@ -157,15 +171,15 @@ export function buildOrderEmailHtml(draftOrder) {
         <h2>Delivery instructions</h2>
       </div>
       <div class="instructions-box">
-        <strong>From ${firstName} ${lastName}</strong>
-        ${instructions}
+        <strong>From ${escHtml(firstName)} ${escHtml(lastName)}</strong>
+        ${escHtml(instructions)}
       </div>
     </div>` : '';
 
   // 7. Totals — shipping row only when shipping_line exists
   const shippingRowHtml = shippingLine ? `
       <div class="totals-row">
-        <span>Shipping · ${shippingLine.title || 'Shipping'}</span>
+        <span>Shipping · ${escHtml(shippingLine.title) || 'Shipping'}</span>
         <b>${formatCurrency(shippingLine.price)}</b>
       </div>` : '';
 
@@ -313,13 +327,6 @@ export function buildOrderEmailHtml(draftOrder) {
     border-bottom: 1px solid #F4F6F3;
   }
   .item-row:last-child { border-bottom: none; }
-  .item-thumb {
-    width: 52px; height: 52px;
-    border-radius: 10px;
-    flex-shrink: 0;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .item-thumb svg { width: 24px; height: 24px; color: rgba(255,255,255,.9); }
   .item-info { flex: 1; min-width: 0; }
   .item-name {
     font-weight: 700;
@@ -584,15 +591,15 @@ export function buildOrderEmailHtml(draftOrder) {
     <div class="email-check">
       <svg viewBox="0 0 24 24" fill="none" stroke="#0A3D2E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
     </div>
-    <h1>Order received, ${firstName}!</h1>
-    <p>Thanks for your order. Our team is reviewing it and will confirm your delivery details shortly. A copy of this email has been sent to <b>${email}</b>.</p>
+    <h1>Order received, ${escHtml(firstName)}!</h1>
+    <p>Thanks for your order. Our team is reviewing it and will confirm your delivery details shortly. A copy of this email has been sent to <b>${escHtml(email)}</b>.</p>
   </div>
 
   <!-- ── META CHIPS ── -->
   <div class="email-meta">
     <div class="email-meta__chip">
       <span class="email-meta__label">Order</span>
-      <span class="email-meta__val">${order.name || '#—'}</span>
+      <span class="email-meta__val">${escHtml(order.name) || '#—'}</span>
     </div>
     <div class="email-meta__sep"></div>
     <div class="email-meta__chip">
@@ -602,7 +609,7 @@ export function buildOrderEmailHtml(draftOrder) {
     <div class="email-meta__sep"></div>
     <div class="email-meta__chip">
       <span class="email-meta__label">Items</span>
-      <span class="email-meta__val">${totalQty} items</span>
+      <span class="email-meta__val">${itemsLabel}</span>
     </div>
     <div class="email-meta__sep"></div>
     <div class="email-meta__chip">
@@ -622,7 +629,7 @@ export function buildOrderEmailHtml(draftOrder) {
         <div class="sec-head__icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
         </div>
-        <h2>Your order · ${totalQty} items</h2>
+        <h2>Your order · ${itemsLabel}</h2>
       </div>
       ${lineItemsHtml}
     </div>
@@ -640,18 +647,16 @@ export function buildOrderEmailHtml(draftOrder) {
           <div class="info-card__col">
             <div class="info-card__label">Delivery address</div>
             <div class="info-card__val">
-              <b>${firstName} ${lastName}</b><br>
-              ${addr.address1 || ''}<br>
-              ${address2Html}${cityProvZip}<br>
-              ${addr.country || ''}<br>
-              ${phoneHtml}
+              <b>${escHtml(firstName)} ${escHtml(lastName)}</b><br>
+              ${address1Html}${address2Html}${cityProvZip}<br>
+              ${countryHtml}${phoneHtml}
             </div>
           </div>
           <div class="info-card__sep"></div>
           <div class="info-card__col">
             <div class="info-card__label">Payment method</div>
             <div class="info-card__val">
-              <b>${resolvedPayment}</b><br>
+              <b>${escHtml(resolvedPayment)}</b><br>
               ${payChipHtml}
             </div>
           </div>
@@ -671,7 +676,7 @@ export function buildOrderEmailHtml(draftOrder) {
       </div>
 
       <div class="totals-row">
-        <span>Subtotal · ${totalQty} items</span>
+        <span>Subtotal · ${itemsLabel}</span>
         <b>${formatCurrency(order.subtotal_price)}</b>
       </div>
       ${shippingRowHtml}
