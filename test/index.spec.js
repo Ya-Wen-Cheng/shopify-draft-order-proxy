@@ -248,8 +248,6 @@ describe('POST /', () => {
   });
 
   it('does not send email when Shopify returns non-201', async () => {
-    mockFetch(mockDraftOrder, 422, true);
-    // For non-201, Shopify returns an error body
     globalThis.fetch.mockImplementation((url) => {
       if (url === 'https://api.resend.com/emails') {
         return Promise.resolve(new Response('{}', { status: 200 }));
