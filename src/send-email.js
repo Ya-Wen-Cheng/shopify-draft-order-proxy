@@ -1,6 +1,11 @@
 import { buildOrderEmailHtml } from './email-template.js';
 
 export async function sendOrderConfirmationEmail(draftOrder, env) {
+  if (!draftOrder?.email) {
+    console.warn('[Email] Skipping confirmation — draft order has no email address');
+    return;
+  }
+
   // 1. Build HTML
   const firstName = draftOrder.shipping_address?.first_name || 'there';
   const html = buildOrderEmailHtml(draftOrder);

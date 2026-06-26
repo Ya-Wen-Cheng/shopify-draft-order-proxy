@@ -74,4 +74,14 @@ describe('buildOrderEmailHtml', () => {
     const order = { ...sampleDraftOrder, shipping_address: null };
     expect(() => buildOrderEmailHtml(order)).not.toThrow();
   });
+
+  it('escapes HTML in user-supplied fields', () => {
+    const order = {
+      ...sampleDraftOrder,
+      shipping_address: { ...sampleDraftOrder.shipping_address, first_name: '<script>alert(1)</script>' },
+    };
+    const html = buildOrderEmailHtml(order);
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+  });
 });
