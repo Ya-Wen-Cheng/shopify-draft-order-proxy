@@ -119,15 +119,17 @@ export function buildOrderEmailHtml(draftOrder) {
 
   // 3. Delivery banner — omit entirely when no shipping_line
   const deliveryBannerHtml = shippingLine ? `
-    <div class="delivery-banner">
-      <div class="delivery-banner__icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
-      </div>
-      <div class="delivery-banner__text">
+    <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" class="delivery-banner"><tr>
+      <td style="width:40px; vertical-align:middle; padding-right:14px;">
+        <div class="delivery-banner__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+        </div>
+      </td>
+      <td class="delivery-banner__text" style="vertical-align:middle;">
         <b>${escHtml(shippingLine.title) || 'Standard Shipping'}</b>
         <span>Delivery in 3–5 business days</span>
-      </div>
-    </div>` : '';
+      </td>
+    </tr></table>` : '';
 
   // 4. Line items — no .item-thumb, show .item-info + .item-qty + .item-price
   const lineItemsHtml = lineItems.map(item => {
@@ -139,14 +141,14 @@ export function buildOrderEmailHtml(draftOrder) {
       : '';
 
     return `
-      <div class="item-row">
-        <div class="item-info">
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" class="item-row"><tr>
+        <td class="item-info" style="vertical-align:middle;">
           <div class="item-name">${escHtml(item.title)}</div>
           ${varHtml}
-        </div>
-        <div class="item-qty">× ${qty}</div>
-        <div class="item-price">$${lineTotal}<span>est.</span></div>
-      </div>`;
+        </td>
+        <td class="item-qty" style="vertical-align:middle; white-space:nowrap; padding-left:14px;">× ${qty}</td>
+        <td class="item-price" style="vertical-align:middle; text-align:right; white-space:nowrap; padding-left:14px;">$${lineTotal}<span>est.</span></td>
+      </tr></table>`;
   }).join('');
 
   // 5. Delivery address lines (skip empty fields, escape all user data)
@@ -164,12 +166,16 @@ export function buildOrderEmailHtml(draftOrder) {
   // 6. Delivery instructions — omit entire section when empty
   const deliveryInstructionsHtml = instructions ? `
     <div class="email-sec">
-      <div class="sec-head">
-        <div class="sec-head__icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-        </div>
-        <h2>Delivery instructions</h2>
-      </div>
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" class="sec-head"><tr>
+        <td style="width:30px; vertical-align:middle; padding-right:10px;">
+          <div class="sec-head__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          </div>
+        </td>
+        <td style="vertical-align:middle;">
+          <h2>Delivery instructions</h2>
+        </td>
+      </tr></table>
       <div class="instructions-box">
         <strong>From ${escHtml(firstName)} ${escHtml(lastName)}</strong>
         ${escHtml(instructions)}
@@ -178,10 +184,10 @@ export function buildOrderEmailHtml(draftOrder) {
 
   // 7. Totals — shipping row only when shipping_line exists
   const shippingRowHtml = shippingLine ? `
-      <div class="totals-row">
-        <span>Shipping · ${escHtml(shippingLine.title) || 'Shipping'}</span>
-        <b>${formatCurrency(shippingLine.price)}</b>
-      </div>` : '';
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" class="totals-row"><tr>
+        <td style="vertical-align:baseline;">Shipping · ${escHtml(shippingLine.title) || 'Shipping'}</td>
+        <td style="vertical-align:baseline; text-align:right;"><b>${formatCurrency(shippingLine.price)}</b></td>
+      </tr></table>` : '';
 
   // ── Full HTML ────────────────────────────────────────────────────────────
 
@@ -234,9 +240,8 @@ export function buildOrderEmailHtml(draftOrder) {
     width: 56px; height: 56px;
     background: #06D6A0;
     border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    text-align: center;
+    line-height: 0;
     margin: 0 auto 16px;
   }
   .email-check svg { width: 28px; height: 28px; }
@@ -259,15 +264,9 @@ export function buildOrderEmailHtml(draftOrder) {
   .email-meta {
     background: #0A3D2E;
     padding: 16px 40px;
-    display: flex;
-    gap: 0;
-    justify-content: space-between;
   }
   .email-meta__chip {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 3px;
+    padding: 0 8px;
   }
   .email-meta__label {
     font-size: 10px;
@@ -285,7 +284,6 @@ export function buildOrderEmailHtml(draftOrder) {
   .email-meta__sep {
     width: 1px;
     background: rgba(255,255,255,.12);
-    align-self: stretch;
   }
 
   /* ── Body ── */
@@ -293,9 +291,7 @@ export function buildOrderEmailHtml(draftOrder) {
 
   /* ── Section headings ── */
   .sec-head {
-    display: flex;
-    align-items: center;
-    gap: 10px;
+    width: 100%;
     margin-bottom: 14px;
     padding-bottom: 10px;
     border-bottom: 1.5px solid #E2E8E4;
@@ -304,8 +300,8 @@ export function buildOrderEmailHtml(draftOrder) {
     width: 30px; height: 30px;
     background: #E6FBF4;
     border-radius: 8px;
-    display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0;
+    text-align: center;
+    line-height: 0;
   }
   .sec-head__icon svg { width: 16px; height: 16px; color: #058C6B; }
   .sec-head h2 {
@@ -320,14 +316,12 @@ export function buildOrderEmailHtml(draftOrder) {
 
   /* ── Line items ── */
   .item-row {
-    display: flex;
-    align-items: center;
-    gap: 14px;
+    width: 100%;
     padding: 14px 0;
     border-bottom: 1px solid #F4F6F3;
   }
   .item-row:last-child { border-bottom: none; }
-  .item-info { flex: 1; min-width: 0; }
+  .item-info { width: 100%; }
   .item-name {
     font-weight: 700;
     font-size: 13.5px;
@@ -347,7 +341,6 @@ export function buildOrderEmailHtml(draftOrder) {
     border-radius: 999px;
     padding: 3px 10px;
     white-space: nowrap;
-    flex-shrink: 0;
   }
   .item-price {
     font-family: 'Fredoka', Arial, sans-serif;
@@ -355,7 +348,6 @@ export function buildOrderEmailHtml(draftOrder) {
     font-size: 15px;
     color: #1B2A24;
     white-space: nowrap;
-    flex-shrink: 0;
     text-align: right;
     min-width: 64px;
   }
@@ -374,11 +366,7 @@ export function buildOrderEmailHtml(draftOrder) {
     border-radius: 12px;
     padding: 16px 18px;
   }
-  .info-card__row {
-    display: flex;
-    gap: 16px;
-  }
-  .info-card__col { flex: 1; }
+  .info-card__col { }
   .info-card__label {
     font-size: 10.5px;
     font-weight: 700;
@@ -395,7 +383,6 @@ export function buildOrderEmailHtml(draftOrder) {
   .info-card__val b { color: #1B2A24; font-weight: 700; }
   .info-card__sep {
     width: 1px; background: #E2E8E4;
-    align-self: stretch; flex-shrink: 0;
   }
 
   /* ── Payment badge ── */
@@ -436,9 +423,7 @@ export function buildOrderEmailHtml(draftOrder) {
   /* ── Totals ── */
   .totals-table { width: 100%; }
   .totals-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
+    width: 100%;
     padding: 7px 0;
     font-size: 13.5px;
     color: #5E6E66;
@@ -450,9 +435,7 @@ export function buildOrderEmailHtml(draftOrder) {
   .totals-row.disc b { color: #058C6B; }
   .totals-divider { height: 1.5px; background: #E2E8E4; margin: 10px 0; }
   .totals-grand {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
+    width: 100%;
     padding: 12px 16px;
     background: #0F5C44;
     border-radius: 12px;
@@ -480,9 +463,7 @@ export function buildOrderEmailHtml(draftOrder) {
   }
   /* ── Invoice notice ── */
   .invoice-notice {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
+    width: 100%;
     background: #FFF3C9;
     border: 1.5px solid #FFE9A0;
     border-left: 4px solid #F5B82E;
@@ -490,41 +471,36 @@ export function buildOrderEmailHtml(draftOrder) {
     padding: 14px 16px;
     margin-top: 14px;
   }
-  .invoice-notice svg { width: 18px; height: 18px; color: #D9971A; flex-shrink: 0; margin-top: 1px; }
+  .invoice-notice svg { width: 18px; height: 18px; color: #D9971A; margin-top: 1px; }
   .invoice-notice__text { font-size: 13px; color: #6F4D14; line-height: 1.6; }
   .invoice-notice__text b { color: #A8731A; display: block; margin-bottom: 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
 
   .totals-disclaimer {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
+    width: 100%;
     margin-top: 12px;
     font-size: 11.5px;
     color: #9FACA4;
     line-height: 1.5;
   }
-  .totals-disclaimer svg { width: 14px; height: 14px; flex-shrink: 0; margin-top: 1px; }
+  .totals-disclaimer svg { width: 14px; height: 14px; margin-top: 1px; }
 
   /* ── Delivery banner ── */
   .delivery-banner {
+    width: 100%;
     background: #E6FBF4;
     border: 1.5px solid #C2F5E4;
     border-radius: 12px;
     padding: 14px 18px;
-    display: flex;
-    align-items: center;
-    gap: 14px;
     margin-bottom: 28px;
   }
   .delivery-banner__icon {
     width: 40px; height: 40px;
     background: #06D6A0;
     border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    flex-shrink: 0;
+    text-align: center;
+    line-height: 0;
   }
   .delivery-banner__icon svg { width: 20px; height: 20px; color: #0A3D2E; }
-  .delivery-banner__text { flex: 1; }
   .delivery-banner__text b {
     display: block;
     font-family: 'Fredoka', Arial, sans-serif;
@@ -558,13 +534,7 @@ export function buildOrderEmailHtml(draftOrder) {
     line-height: 1.6;
     margin-bottom: 14px;
   }
-  .email-footer__links {
-    display: flex;
-    justify-content: center;
-    gap: 20px;
-    flex-wrap: wrap;
-  }
-  .email-footer__links a {
+  .email-footer__links-a {
     font-size: 12px;
     color: #4FE2B4;
     text-decoration: none;
@@ -597,25 +567,27 @@ export function buildOrderEmailHtml(draftOrder) {
 
   <!-- ── META CHIPS ── -->
   <div class="email-meta">
-    <div class="email-meta__chip">
-      <span class="email-meta__label">Order</span>
-      <span class="email-meta__val">${escHtml(order.name) || '#—'}</span>
-    </div>
-    <div class="email-meta__sep"></div>
-    <div class="email-meta__chip">
-      <span class="email-meta__label">Date</span>
-      <span class="email-meta__val">${orderDate}</span>
-    </div>
-    <div class="email-meta__sep"></div>
-    <div class="email-meta__chip">
-      <span class="email-meta__label">Items</span>
-      <span class="email-meta__val">${itemsLabel}</span>
-    </div>
-    <div class="email-meta__sep"></div>
-    <div class="email-meta__chip">
-      <span class="email-meta__label">Est. delivery</span>
-      <span class="email-meta__val">3–5 business days</span>
-    </div>
+    <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tr>
+      <td class="email-meta__chip" style="text-align:center">
+        <span class="email-meta__label">Order</span><br>
+        <span class="email-meta__val">${escHtml(order.name) || '#—'}</span>
+      </td>
+      <td class="email-meta__sep"></td>
+      <td class="email-meta__chip" style="text-align:center">
+        <span class="email-meta__label">Date</span><br>
+        <span class="email-meta__val">${orderDate}</span>
+      </td>
+      <td class="email-meta__sep"></td>
+      <td class="email-meta__chip" style="text-align:center">
+        <span class="email-meta__label">Items</span><br>
+        <span class="email-meta__val">${itemsLabel}</span>
+      </td>
+      <td class="email-meta__sep"></td>
+      <td class="email-meta__chip" style="text-align:center">
+        <span class="email-meta__label">Est. delivery</span><br>
+        <span class="email-meta__val">3–5 business days</span>
+      </td>
+    </tr></table>
   </div>
 
   <!-- ── BODY ── -->
@@ -625,42 +597,50 @@ export function buildOrderEmailHtml(draftOrder) {
 
     <!-- 1. Items -->
     <div class="email-sec">
-      <div class="sec-head">
-        <div class="sec-head__icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
-        </div>
-        <h2>Your order · ${itemsLabel}</h2>
-      </div>
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" class="sec-head"><tr>
+        <td style="width:30px; vertical-align:middle; padding-right:10px;">
+          <div class="sec-head__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+          </div>
+        </td>
+        <td style="vertical-align:middle;">
+          <h2>Your order · ${itemsLabel}</h2>
+        </td>
+      </tr></table>
       ${lineItemsHtml}
     </div>
 
     <!-- 2. Delivery address + Payment method -->
     <div class="email-sec">
-      <div class="sec-head">
-        <div class="sec-head__icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
-        </div>
-        <h2>Delivery &amp; Payment</h2>
-      </div>
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" class="sec-head"><tr>
+        <td style="width:30px; vertical-align:middle; padding-right:10px;">
+          <div class="sec-head__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+          </div>
+        </td>
+        <td style="vertical-align:middle;">
+          <h2>Delivery &amp; Payment</h2>
+        </td>
+      </tr></table>
       <div class="info-card">
-        <div class="info-card__row">
-          <div class="info-card__col">
+        <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tr>
+          <td class="info-card__col" style="vertical-align:top; width:50%;">
             <div class="info-card__label">Delivery address</div>
             <div class="info-card__val">
               <b>${escHtml(firstName)} ${escHtml(lastName)}</b><br>
               ${address1Html}${address2Html}${cityProvZip}<br>
               ${countryHtml}${phoneHtml}
             </div>
-          </div>
-          <div class="info-card__sep"></div>
-          <div class="info-card__col">
+          </td>
+          <td class="info-card__sep" style="width:1px;"></td>
+          <td class="info-card__col" style="vertical-align:top; width:50%; padding-left:16px;">
             <div class="info-card__label">Payment method</div>
             <div class="info-card__val">
               <b>${escHtml(resolvedPayment)}</b><br>
               ${payChipHtml}
             </div>
-          </div>
-        </div>
+          </td>
+        </tr></table>
       </div>
     </div>
 
@@ -668,36 +648,50 @@ export function buildOrderEmailHtml(draftOrder) {
 
     <!-- 4. Order totals -->
     <div class="email-sec">
-      <div class="sec-head">
-        <div class="sec-head__icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-        </div>
-        <h2>Estimated totals</h2>
-      </div>
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" class="sec-head"><tr>
+        <td style="width:30px; vertical-align:middle; padding-right:10px;">
+          <div class="sec-head__icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          </div>
+        </td>
+        <td style="vertical-align:middle;">
+          <h2>Estimated totals</h2>
+        </td>
+      </tr></table>
 
-      <div class="totals-row">
-        <span>Subtotal · ${itemsLabel}</span>
-        <b>${formatCurrency(order.subtotal_price)}</b>
-      </div>
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" class="totals-row"><tr>
+        <td style="vertical-align:baseline;">Subtotal · ${itemsLabel}</td>
+        <td style="vertical-align:baseline; text-align:right;"><b>${formatCurrency(order.subtotal_price)}</b></td>
+      </tr></table>
       ${shippingRowHtml}
 
-      <div class="totals-grand">
-        <div class="totals-grand__label">
-          Est. total
-          <span>Prices confirmed on invoice</span>
-        </div>
-        <div class="totals-grand__amt">~${formatCurrency(order.total_price)}</div>
-      </div>
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" class="totals-grand"><tr>
+        <td style="vertical-align:baseline;">
+          <div class="totals-grand__label">
+            Est. total
+            <span>Prices confirmed on invoice</span>
+          </div>
+        </td>
+        <td style="vertical-align:baseline; text-align:right;">
+          <div class="totals-grand__amt">~${formatCurrency(order.total_price)}</div>
+        </td>
+      </tr></table>
 
-      <div class="invoice-notice">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-        <div class="invoice-notice__text"><b>Final amount confirmed on invoice</b>The totals above are estimates. Your formal invoice — with the confirmed final amount — will be sent when your order ships. No payment is taken now.</div>
-      </div>
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" class="invoice-notice"><tr>
+        <td style="width:18px; vertical-align:top; padding-top:1px; padding-right:12px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+        </td>
+        <td class="invoice-notice__text" style="vertical-align:top;">
+          <b>Final amount confirmed on invoice</b>The totals above are estimates. Your formal invoice — with the confirmed final amount — will be sent when your order ships. No payment is taken now.
+        </td>
+      </tr></table>
 
-      <div class="totals-disclaimer">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-        Prices are estimates based on recent supplier costs and may be adjusted slightly on your invoice. No payment is taken at this stage — you'll receive a formal invoice with the final total when your order ships.
-      </div>
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" class="totals-disclaimer"><tr>
+        <td style="width:14px; vertical-align:top; padding-top:1px; padding-right:8px;">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+        </td>
+        <td style="vertical-align:top;">Prices are estimates based on recent supplier costs and may be adjusted slightly on your invoice. No payment is taken at this stage — you'll receive a formal invoice with the final total when your order ships.</td>
+      </tr></table>
     </div>
 
   </div>
@@ -706,12 +700,12 @@ export function buildOrderEmailHtml(draftOrder) {
   <div class="email-footer">
     <div class="email-footer__logo">AIG<span>O</span> Sunshine Fresh</div>
     <p>Wholesale Asian groceries, fresh produce &amp; bubble-tea supplies.<br>Fresh you can see — and taste.</p>
-    <div class="email-footer__links">
-      <a href="#">Track order</a>
-      <a href="#">View order online</a>
-      <a href="#">Contact support</a>
-      <a href="#">Unsubscribe</a>
-    </div>
+    <table border="0" cellpadding="0" cellspacing="0" role="presentation" align="center"><tr>
+      <td style="padding: 0 10px;"><a href="#" class="email-footer__links-a">Track order</a></td>
+      <td style="padding: 0 10px;"><a href="#" class="email-footer__links-a">View order online</a></td>
+      <td style="padding: 0 10px;"><a href="#" class="email-footer__links-a">Contact support</a></td>
+      <td style="padding: 0 10px;"><a href="#" class="email-footer__links-a">Unsubscribe</a></td>
+    </tr></table>
     <div class="email-footer__divider"></div>
     <div class="email-footer__legal">
       &copy; ${currentYear} AIGO Sunshine Fresh &middot; 188 S Valley Blvd, San Gabriel, CA 91776<br>

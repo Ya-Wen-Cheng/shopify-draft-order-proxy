@@ -56,12 +56,12 @@ describe('buildOrderEmailHtml', () => {
     const order = { ...sampleDraftOrder, shipping_line: null };
     const html = buildOrderEmailHtml(order);
     // CSS always has .delivery-banner; check the actual HTML element is absent
-    expect(html).not.toContain('<div class="delivery-banner">');
+    expect(html).not.toContain('class="delivery-banner"');
   });
 
   it('shows delivery banner when shipping_line exists', () => {
     const html = buildOrderEmailHtml(sampleDraftOrder);
-    expect(html).toContain('<div class="delivery-banner">');
+    expect(html).toContain('class="delivery-banner"');
     expect(html).toContain('Standard Freight');
   });
 
