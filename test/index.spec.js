@@ -10,7 +10,7 @@ function makeCtx() {
 
 async function call(request, mockEnv = {}) {
   const ctx = makeCtx();
-  const res = await worker.fetch(request, { SHOPIFY_TOKEN: 'test-token', ...mockEnv }, ctx);
+  const res = await worker.fetch(request, { SHOPIFY_TOKEN: 'test-token', RESEND_API_KEY: 'test-resend-key', ...mockEnv }, ctx);
   await waitOnExecutionContext(ctx);
   return res;
 }
@@ -96,6 +96,26 @@ describe('GET /?id=', () => {
 describe('POST /', () => {
   beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
 
+  const mockDraftOrder = {
+    id: 99,
+    name: '#D99',
+    email: 'buyer@example.com',
+    created_at: '2026-06-26T10:00:00Z',
+    shipping_address: {
+      first_name: 'Mei', last_name: 'Chen',
+      address1: '188 S Valley Blvd', address2: 'Suite 200',
+      city: 'San Gabriel', province: 'CA', country: 'US', zip: '91776',
+      phone: '',
+    },
+    line_items: [{ title: 'Roma Tomatoes', variant_title: 'Jumbo', quantity: 2, price: '87.27' }],
+    subtotal_price: '174.54',
+    total_price: '174.54',
+    total_tax: '0.00',
+    shipping_line: null,
+    note: '',
+    tags: 'draft-order',
+  };
+
   const baseCart = {
     items: [{ variant_id: 1, quantity: 2 }],
     email: 'buyer@example.com',
@@ -108,10 +128,20 @@ describe('POST /', () => {
     tags: 'draft-order',
   };
 
+  function mockFetch(draftOrder = mockDraftOrder, shopifyStatus = 201, resendOk = true) {
+    globalThis.fetch.mockImplementation((url) => {
+      if (url === 'https://api.resend.com/emails') {
+        return Promise.resolve(new Response(JSON.stringify({ id: 'email-123' }), { status: resendOk ? 200 : 500 }));
+      }
+      // Shopify call
+      return Promise.resolve(
+        new Response(JSON.stringify({ draft_order: draftOrder }), { status: shopifyStatus })
+      );
+    });
+  }
+
   it('builds draft_order with full shipping address', async () => {
-    globalThis.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ draft_order: { id: 99 } }), { status: 201 })
-    );
+    mockFetch();
 
     const res = await call(
       new Request('http://example.com/', {
@@ -132,9 +162,7 @@ describe('POST /', () => {
   });
 
   it('appends payment method and promo to note', async () => {
-    globalThis.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ draft_order: { id: 99 } }), { status: 201 })
-    );
+    mockFetch();
 
     const res = await call(
       new Request('http://example.com/', {
@@ -158,9 +186,7 @@ describe('POST /', () => {
   });
 
   it('includes shipping_line when provided', async () => {
-    globalThis.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ draft_order: { id: 99 } }), { status: 201 })
-    );
+    mockFetch();
 
     const res = await call(
       new Request('http://example.com/', {
@@ -179,9 +205,7 @@ describe('POST /', () => {
   });
 
   it('includes payment method id in tags', async () => {
-    globalThis.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ draft_order: { id: 99 } }), { status: 201 })
-    );
+    mockFetch();
 
     await call(
       new Request('http://example.com/', {
@@ -197,5 +221,70 @@ describe('POST /', () => {
     const [, fetchOpts] = globalThis.fetch.mock.calls[0];
     const body = JSON.parse(fetchOpts.body);
     expect(body.draft_order.tags).toContain('ach');
+  });
+
+  it('sends confirmation email via Resend on 201', async () => {
+    mockFetch();
+
+    await call(
+      new Request('http://example.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(baseCart),
+      })
+    );
+
+    const resendCall = globalThis.fetch.mock.calls.find(
+      ([url]) => url === 'https://api.resend.com/emails'
+    );
+    expect(resendCall).toBeDefined();
+    const resendOpts = resendCall[1];
+    expect(resendOpts.headers.Authorization).toBe('Bearer test-resend-key');
+    const resendBody = JSON.parse(resendOpts.body);
+    expect(resendBody.from).toBe('AIGO Sunshine Fresh <info@my-aigo.com>');
+    expect(resendBody.to).toEqual(['buyer@example.com']);
+    expect(resendBody.subject).toContain('We received your order');
+    expect(resendBody.html).toContain('Order received');
+  });
+
+  it('does not send email when Shopify returns non-201', async () => {
+    globalThis.fetch.mockImplementation((url) => {
+      if (url === 'https://api.resend.com/emails') {
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify({ errors: ['Validation failed'] }), { status: 422 })
+      );
+    });
+
+    await call(
+      new Request('http://example.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(baseCart),
+      })
+    );
+
+    const resendCall = globalThis.fetch.mock.calls.find(
+      ([url]) => url === 'https://api.resend.com/emails'
+    );
+    expect(resendCall).toBeUndefined();
+  });
+
+  it('email failure does not affect draft order response', async () => {
+    mockFetch(mockDraftOrder, 201, false); // Resend returns 500
+
+    const res = await call(
+      new Request('http://example.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(baseCart),
+      })
+    );
+
+    // Worker still returns 201 with draft order
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.draft_order.id).toBe(99);
   });
 });

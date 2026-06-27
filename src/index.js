@@ -8,6 +8,8 @@
  *   POST /                          → create a draft order from cart
  */
 
+import { sendOrderConfirmationEmail } from './send-email.js';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
@@ -22,7 +24,7 @@ function json(data, status = 200) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: CORS });
     }
@@ -187,6 +189,15 @@ export default {
         });
 
         const result = await res.json();
+
+        // Send confirmation email non-blocking
+        if (res.status === 201 && result.draft_order) {
+          ctx.waitUntil(
+            sendOrderConfirmationEmail(result.draft_order, env)
+              .catch(err => console.error('[Email] Failed to send confirmation:', err))
+          );
+        }
+
         return json(result, res.status);
       } catch (err) {
         return json({ error: err.message }, 500);
