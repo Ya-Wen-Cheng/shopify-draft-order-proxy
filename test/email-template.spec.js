@@ -85,3 +85,30 @@ describe('buildOrderEmailHtml', () => {
     expect(html).toContain('&lt;script&gt;');
   });
 });
+
+describe('responsive mobile styles', () => {
+  it('includes @media only screen query for mobile breakpoint', () => {
+    const html = buildOrderEmailHtml(sampleDraftOrder);
+    expect(html).toContain('@media only screen and (max-width: 600px)');
+  });
+
+  it('includes inline style fallback on email-shell', () => {
+    const html = buildOrderEmailHtml(sampleDraftOrder);
+    expect(html).toMatch(/class="email-shell"[^>]*style="/);
+  });
+
+  it('includes table-layout:fixed on meta chips table', () => {
+    const html = buildOrderEmailHtml(sampleDraftOrder);
+    expect(html).toMatch(/class="email-meta__table"[^>]*style="[^"]*table-layout:fixed/);
+  });
+
+  it('includes inline padding fallback on email-body', () => {
+    const html = buildOrderEmailHtml(sampleDraftOrder);
+    expect(html).toMatch(/class="email-body"[^>]*style="[^"]*padding/);
+  });
+
+  it('footer link cells have responsive class email-footer__link-cell', () => {
+    const html = buildOrderEmailHtml(sampleDraftOrder);
+    expect(html).toContain('class="email-footer__link-cell"');
+  });
+});

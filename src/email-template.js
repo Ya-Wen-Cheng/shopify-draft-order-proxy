@@ -141,13 +141,13 @@ export function buildOrderEmailHtml(draftOrder) {
       : '';
 
     return `
-      <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" class="item-row"><tr>
+      <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" class="item-row" style="table-layout:fixed; width:100%;"><tr>
         <td class="item-info" style="vertical-align:middle;">
           <div class="item-name">${escHtml(item.title)}</div>
           ${varHtml}
         </td>
-        <td class="item-qty" style="vertical-align:middle; white-space:nowrap; padding-left:14px;">× ${qty}</td>
-        <td class="item-price" style="vertical-align:middle; text-align:right; white-space:nowrap; padding-left:14px;">$${lineTotal}<span>est.</span></td>
+        <td class="item-qty" style="vertical-align:middle; white-space:nowrap; padding-left:14px; width:52px;">× ${qty}</td>
+        <td class="item-price" style="vertical-align:middle; text-align:right; white-space:nowrap; padding-left:14px; width:76px;">$${lineTotal}<span>est.</span></td>
       </tr></table>`;
   }).join('');
 
@@ -315,6 +315,7 @@ export function buildOrderEmailHtml(draftOrder) {
   .email-sec { margin-bottom: 28px; }
 
   /* ── Line items ── */
+  .item-row, .totals-row, .totals-grand, .invoice-notice, .totals-disclaimer { table-layout: fixed; }
   .item-row {
     width: 100%;
     padding: 14px 0;
@@ -549,14 +550,36 @@ export function buildOrderEmailHtml(draftOrder) {
     color: #45554D;
     line-height: 1.6;
   }
+
+  /* ── Mobile responsive ── */
+  @media only screen and (max-width: 600px) {
+    .email-header { padding: 24px 16px 20px !important; }
+    .email-meta   { padding: 14px 16px !important; }
+    .email-body   { padding: 24px 16px !important; }
+    .email-footer { padding: 24px 16px !important; }
+
+    .email-meta__chip-cell { display: block !important; width: 100% !important; padding: 4px 0 !important; }
+    .email-meta__chip { text-align: left !important; }
+    .email-meta__sep  { display: none !important; }
+
+    .info-card__col { display: block !important; width: 100% !important; padding-left: 0 !important; }
+    .info-card__sep { display: none !important; }
+
+    .email-footer__link-cell { display: block !important; width: 100% !important; padding: 6px 0 !important; }
+
+    .item-price { min-width: 50px !important; font-size: 13px !important; }
+    .totals-grand__amt { font-size: 22px !important; }
+    .email-header h1 { font-size: 22px !important; }
+    .email-logo { font-size: 24px !important; }
+  }
 </style>
 </head>
 <body>
 
-<div class="email-shell">
+<div class="email-shell" style="max-width:600px; margin:0 auto; background:#ffffff; border-radius:16px; overflow:hidden;">
 
   <!-- ── HEADER ── -->
-  <div class="email-header">
+  <div class="email-header" style="background:#0F5C44; padding:32px 40px 28px; text-align:center;">
     <span class="email-logo">AIG<span>O</span> Sunshine Fresh</span>
     <div class="email-check">
       <svg viewBox="0 0 24 24" fill="none" stroke="#0A3D2E" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
@@ -566,32 +589,40 @@ export function buildOrderEmailHtml(draftOrder) {
   </div>
 
   <!-- ── META CHIPS ── -->
-  <div class="email-meta">
-    <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tr>
-      <td class="email-meta__chip" style="text-align:center">
-        <span class="email-meta__label">Order</span><br>
-        <span class="email-meta__val">${escHtml(order.name) || '#—'}</span>
+  <div class="email-meta" style="background:#0A3D2E; padding:16px 40px;">
+    <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" class="email-meta__table" style="table-layout:fixed; width:100%; min-width:280px;"><tr>
+      <td class="email-meta__chip-cell" style="width:24%; padding:0 4px; text-align:center;">
+        <div class="email-meta__chip">
+          <span class="email-meta__label">Order</span><br>
+          <span class="email-meta__val">${escHtml(order.name) || '#—'}</span>
+        </div>
       </td>
       <td class="email-meta__sep"></td>
-      <td class="email-meta__chip" style="text-align:center">
-        <span class="email-meta__label">Date</span><br>
-        <span class="email-meta__val">${orderDate}</span>
+      <td class="email-meta__chip-cell" style="width:24%; padding:0 4px; text-align:center;">
+        <div class="email-meta__chip">
+          <span class="email-meta__label">Date</span><br>
+          <span class="email-meta__val">${orderDate}</span>
+        </div>
       </td>
       <td class="email-meta__sep"></td>
-      <td class="email-meta__chip" style="text-align:center">
-        <span class="email-meta__label">Items</span><br>
-        <span class="email-meta__val">${itemsLabel}</span>
+      <td class="email-meta__chip-cell" style="width:24%; padding:0 4px; text-align:center;">
+        <div class="email-meta__chip">
+          <span class="email-meta__label">Items</span><br>
+          <span class="email-meta__val">${itemsLabel}</span>
+        </div>
       </td>
       <td class="email-meta__sep"></td>
-      <td class="email-meta__chip" style="text-align:center">
-        <span class="email-meta__label">Est. delivery</span><br>
-        <span class="email-meta__val">3–5 business days</span>
+      <td class="email-meta__chip-cell" style="width:24%; padding:0 4px; text-align:center;">
+        <div class="email-meta__chip">
+          <span class="email-meta__label">Est. delivery</span><br>
+          <span class="email-meta__val">3–5 business days</span>
+        </div>
       </td>
     </tr></table>
   </div>
 
   <!-- ── BODY ── -->
-  <div class="email-body">
+  <div class="email-body" style="padding:32px 40px;">
 
     ${deliveryBannerHtml}
 
@@ -623,21 +654,25 @@ export function buildOrderEmailHtml(draftOrder) {
         </td>
       </tr></table>
       <div class="info-card">
-        <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%"><tr>
-          <td class="info-card__col" style="vertical-align:top; width:50%;">
-            <div class="info-card__label">Delivery address</div>
-            <div class="info-card__val">
-              <b>${escHtml(firstName)} ${escHtml(lastName)}</b><br>
-              ${address1Html}${address2Html}${cityProvZip}<br>
-              ${countryHtml}${phoneHtml}
+        <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" style="table-layout:fixed; width:100%;"><tr>
+          <td style="vertical-align:top; width:50%;">
+            <div class="info-card__col">
+              <div class="info-card__label">Delivery address</div>
+              <div class="info-card__val">
+                <b>${escHtml(firstName)} ${escHtml(lastName)}</b><br>
+                ${address1Html}${address2Html}${cityProvZip}<br>
+                ${countryHtml}${phoneHtml}
+              </div>
             </div>
           </td>
           <td class="info-card__sep" style="width:1px;"></td>
-          <td class="info-card__col" style="vertical-align:top; width:50%; padding-left:16px;">
-            <div class="info-card__label">Payment method</div>
-            <div class="info-card__val">
-              <b>${escHtml(resolvedPayment)}</b><br>
-              ${payChipHtml}
+          <td style="vertical-align:top; width:50%; padding-left:16px;">
+            <div class="info-card__col">
+              <div class="info-card__label">Payment method</div>
+              <div class="info-card__val">
+                <b>${escHtml(resolvedPayment)}</b><br>
+                ${payChipHtml}
+              </div>
             </div>
           </td>
         </tr></table>
@@ -697,14 +732,14 @@ export function buildOrderEmailHtml(draftOrder) {
   </div>
 
   <!-- ── FOOTER ── -->
-  <div class="email-footer">
+  <div class="email-footer" style="background:#1B2A24; padding:28px 40px; text-align:center;">
     <div class="email-footer__logo">AIG<span>O</span> Sunshine Fresh</div>
     <p>Wholesale Asian groceries, fresh produce &amp; bubble-tea supplies.<br>Fresh you can see — and taste.</p>
-    <table border="0" cellpadding="0" cellspacing="0" role="presentation" align="center"><tr>
-      <td style="padding: 0 10px;"><a href="#" class="email-footer__links-a">Track order</a></td>
-      <td style="padding: 0 10px;"><a href="#" class="email-footer__links-a">View order online</a></td>
-      <td style="padding: 0 10px;"><a href="#" class="email-footer__links-a">Contact support</a></td>
-      <td style="padding: 0 10px;"><a href="#" class="email-footer__links-a">Unsubscribe</a></td>
+    <table border="0" cellpadding="0" cellspacing="0" role="presentation" width="100%" align="center"><tr>
+      <td class="email-footer__link-cell" style="padding: 0 10px;"><a href="#" class="email-footer__links-a">Track order</a></td>
+      <td class="email-footer__link-cell" style="padding: 0 10px;"><a href="#" class="email-footer__links-a">View order online</a></td>
+      <td class="email-footer__link-cell" style="padding: 0 10px;"><a href="#" class="email-footer__links-a">Contact support</a></td>
+      <td class="email-footer__link-cell" style="padding: 0 10px;"><a href="#" class="email-footer__links-a">Unsubscribe</a></td>
     </tr></table>
     <div class="email-footer__divider"></div>
     <div class="email-footer__legal">
