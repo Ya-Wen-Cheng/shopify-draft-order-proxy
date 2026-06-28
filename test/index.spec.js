@@ -10,7 +10,7 @@ function makeCtx() {
 
 async function call(request, mockEnv = {}) {
   const ctx = makeCtx();
-  const res = await worker.fetch(request, { SHOPIFY_TOKEN: 'test-token', RESEND_API_KEY: 'test-resend-key', ...mockEnv }, ctx);
+  const res = await worker.fetch(request, { SHOPIFY_TOKEN: 'test-token', ...mockEnv }, ctx);
   await waitOnExecutionContext(ctx);
   return res;
 }
@@ -128,12 +128,12 @@ describe('POST /', () => {
     tags: 'draft-order',
   };
 
-  function mockFetch(draftOrder = mockDraftOrder, shopifyStatus = 201, resendOk = true) {
+  function mockFetch(draftOrder = mockDraftOrder, shopifyStatus = 201, invoiceOk = true) {
     globalThis.fetch.mockImplementation((url) => {
-      if (url === 'https://api.resend.com/emails') {
-        return Promise.resolve(new Response(JSON.stringify({ id: 'email-123' }), { status: resendOk ? 200 : 500 }));
+      if (url.includes('/send_invoice.json')) {
+        return Promise.resolve(new Response(JSON.stringify({ draft_order_invoice: {} }), { status: invoiceOk ? 200 : 500 }));
       }
-      // Shopify call
+      // Shopify create draft order call
       return Promise.resolve(
         new Response(JSON.stringify({ draft_order: draftOrder }), { status: shopifyStatus })
       );
@@ -223,7 +223,7 @@ describe('POST /', () => {
     expect(body.draft_order.tags).toContain('ach');
   });
 
-  it('sends confirmation email via Resend on 201', async () => {
+  it('sends invoice via Shopify on 201', async () => {
     mockFetch();
 
     await call(
@@ -234,23 +234,22 @@ describe('POST /', () => {
       })
     );
 
-    const resendCall = globalThis.fetch.mock.calls.find(
-      ([url]) => url === 'https://api.resend.com/emails'
+    const invoiceCall = globalThis.fetch.mock.calls.find(
+      ([url]) => url.includes('/send_invoice.json')
     );
-    expect(resendCall).toBeDefined();
-    const resendOpts = resendCall[1];
-    expect(resendOpts.headers.Authorization).toBe('Bearer test-resend-key');
-    const resendBody = JSON.parse(resendOpts.body);
-    expect(resendBody.from).toBe('AIGO Sunshine Fresh <info@my-aigo.com>');
-    expect(resendBody.to).toEqual(['buyer@example.com']);
-    expect(resendBody.subject).toContain('We received your order');
-    expect(resendBody.html).toContain('Order received');
+    expect(invoiceCall).toBeDefined();
+    const [invoiceUrl, invoiceOpts] = invoiceCall;
+    expect(invoiceUrl).toContain('/draft_orders/99/send_invoice.json');
+    expect(invoiceOpts.method).toBe('POST');
+    expect(invoiceOpts.headers['X-Shopify-Access-Token']).toBe('test-token');
+    const invoiceBody = JSON.parse(invoiceOpts.body);
+    expect(invoiceBody).toEqual({ draft_order_invoice: {} });
   });
 
-  it('does not send email when Shopify returns non-201', async () => {
+  it('does not send invoice when Shopify returns non-201', async () => {
     globalThis.fetch.mockImplementation((url) => {
-      if (url === 'https://api.resend.com/emails') {
-        return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.includes('/send_invoice.json')) {
+        return Promise.resolve(new Response(JSON.stringify({ draft_order_invoice: {} }), { status: 200 }));
       }
       return Promise.resolve(
         new Response(JSON.stringify({ errors: ['Validation failed'] }), { status: 422 })
@@ -265,14 +264,14 @@ describe('POST /', () => {
       })
     );
 
-    const resendCall = globalThis.fetch.mock.calls.find(
-      ([url]) => url === 'https://api.resend.com/emails'
+    const invoiceCall = globalThis.fetch.mock.calls.find(
+      ([url]) => url.includes('/send_invoice.json')
     );
-    expect(resendCall).toBeUndefined();
+    expect(invoiceCall).toBeUndefined();
   });
 
-  it('email failure does not affect draft order response', async () => {
-    mockFetch(mockDraftOrder, 201, false); // Resend returns 500
+  it('invoice failure does not affect draft order response', async () => {
+    mockFetch(mockDraftOrder, 201, false); // send_invoice returns 500
 
     const res = await call(
       new Request('http://example.com/', {

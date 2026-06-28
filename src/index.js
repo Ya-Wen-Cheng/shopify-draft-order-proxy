@@ -8,7 +8,6 @@
  *   POST /                          → create a draft order from cart
  */
 
-import { sendOrderConfirmationEmail } from './send-email.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -190,11 +189,17 @@ export default {
 
         const result = await res.json();
 
-        // Send confirmation email non-blocking
+        // Send draft order invoice via Shopify (non-blocking)
         if (res.status === 201 && result.draft_order) {
           ctx.waitUntil(
-            sendOrderConfirmationEmail(result.draft_order, env)
-              .catch(err => console.error('[Email] Failed to send confirmation:', err))
+            fetch(`${restBase}/draft_orders/${result.draft_order.id}/send_invoice.json`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Shopify-Access-Token': token,
+              },
+              body: JSON.stringify({ draft_order_invoice: {} }),
+            }).catch(err => console.error('[Invoice] Failed to send:', err))
           );
         }
 
