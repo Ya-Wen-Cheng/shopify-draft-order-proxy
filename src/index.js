@@ -8,7 +8,6 @@
  *   POST /                          → create a draft order from cart
  */
 
-import { sendOrderConfirmationEmail } from './send-email.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -153,10 +152,29 @@ export default {
         }
 
         const draftOrder = {
-          line_items: cart.items.map(item => ({
-            variant_id: item.variant_id || item.id,
-            quantity:   item.quantity,
-          })),
+          // Change A: Map memberDiscounts to per-line-item applied_discount
+          line_items: (() => {
+            const discountMap = {};
+            if (Array.isArray(cart.memberDiscounts)) {
+              for (const d of cart.memberDiscounts) {
+                discountMap[String(d.variantId)] = d;  // Fix 2: normalize key to string
+              }
+            }
+            return cart.items.map(item => {
+              const variantId = String(item.variant_id || item.id);  // Fix 2: normalize lookup key
+              const lineItem = { variant_id: variantId, quantity: item.quantity };
+              const disc = discountMap[variantId];
+              if (disc && disc.discountCents > 0) {
+                lineItem.applied_discount = {
+                  description: disc.title || 'Membership discount',
+                  value_type:  'fixed_amount',
+                  value:       (disc.discountCents / 100).toFixed(2),
+                  // Fix 1: removed read-only `amount` field (computed by Shopify)
+                };
+              }
+              return lineItem;
+            });
+          })(),
           email: cart.email,
           customer: { id: cart.customerId },
           shipping_address: {
@@ -171,10 +189,27 @@ export default {
           },
           tags: [cart.tags, cart.paymentMethod?.id].filter(Boolean).join(', '),
           ...(note                 && { note }),
-          ...(cart.shippingLine    && {
+          // Change C: Zero out shipping_line.price when freeShipping is true
+          ...(cart.shippingLine && {
             shipping_line: {
               title: cart.shippingLine.title,
-              price: cart.shippingLine.price,
+              price: cart.freeShipping ? '0.00' : cart.shippingLine.price,
+            },
+          }),
+          // If free shipping but no rate selected (edge case)
+          ...(!cart.shippingLine && cart.freeShipping && {
+            shipping_line: {
+              title: 'Standard Shipping (Free)',
+              price: '0.00',
+            },
+          }),
+          // Change B: Add order-level applied_discount for promo code
+          ...(cart.promoAmountCents > 0 && {
+            applied_discount: {
+              description: cart.promoCode ? `Promo code: ${cart.promoCode}` : 'Promo discount',
+              value_type:  'fixed_amount',
+              value:       (cart.promoAmountCents / 100).toFixed(2),
+              // Fix 1: removed read-only `amount` field (computed by Shopify)
             },
           }),
         };
@@ -190,11 +225,17 @@ export default {
 
         const result = await res.json();
 
-        // Send confirmation email non-blocking
+        // Send draft order invoice via Shopify (non-blocking)
         if (res.status === 201 && result.draft_order) {
           ctx.waitUntil(
-            sendOrderConfirmationEmail(result.draft_order, env)
-              .catch(err => console.error('[Email] Failed to send confirmation:', err))
+            fetch(`${restBase}/draft_orders/${result.draft_order.id}/send_invoice.json`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Shopify-Access-Token': token,
+              },
+              body: JSON.stringify({ draft_order_invoice: {} }),
+            }).catch(err => console.error('[Invoice] Failed to send:', err))
           );
         }
 
