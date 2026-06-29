@@ -157,11 +157,11 @@ export default {
             const discountMap = {};
             if (Array.isArray(cart.memberDiscounts)) {
               for (const d of cart.memberDiscounts) {
-                discountMap[d.variantId] = d;
+                discountMap[String(d.variantId)] = d;  // Fix 2: normalize key to string
               }
             }
             return cart.items.map(item => {
-              const variantId = item.variant_id || item.id;
+              const variantId = String(item.variant_id || item.id);  // Fix 2: normalize lookup key
               const lineItem = { variant_id: variantId, quantity: item.quantity };
               const disc = discountMap[variantId];
               if (disc && disc.discountCents > 0) {
@@ -169,7 +169,7 @@ export default {
                   description: disc.title || 'Membership discount',
                   value_type:  'fixed_amount',
                   value:       (disc.discountCents / 100).toFixed(2),
-                  amount:      (disc.discountCents / 100).toFixed(2),
+                  // Fix 1: removed read-only `amount` field (computed by Shopify)
                 };
               }
               return lineItem;
@@ -209,7 +209,7 @@ export default {
               description: cart.promoCode ? `Promo code: ${cart.promoCode}` : 'Promo discount',
               value_type:  'fixed_amount',
               value:       (cart.promoAmountCents / 100).toFixed(2),
-              amount:      (cart.promoAmountCents / 100).toFixed(2),
+              // Fix 1: removed read-only `amount` field (computed by Shopify)
             },
           }),
         };

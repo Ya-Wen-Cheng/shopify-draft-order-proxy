@@ -286,4 +286,139 @@ describe('POST /', () => {
     const data = await res.json();
     expect(data.draft_order.id).toBe(99);
   });
+
+  // Test A — memberDiscounts applied per line item
+  it('maps memberDiscounts to per-line-item applied_discount', async () => {
+    mockFetch();
+
+    const cartWithDiscount = {
+      ...baseCart,
+      // variant_id on the item is a number (1); variantId in memberDiscounts may be a number or string
+      memberDiscounts: [{ variantId: 1, discountCents: 500, title: 'Member 10% off' }],
+    };
+
+    await call(
+      new Request('http://example.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cartWithDiscount),
+      })
+    );
+
+    const [, fetchOpts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(fetchOpts.body);
+    const lineItem = body.draft_order.line_items[0];
+
+    // applied_discount must be present with correct fields
+    expect(lineItem.applied_discount).toBeDefined();
+    expect(lineItem.applied_discount.value_type).toBe('fixed_amount');
+    expect(lineItem.applied_discount.value).toBe('5.00');
+    expect(lineItem.applied_discount.description).toBe('Member 10% off');
+
+    // amount must NOT be sent (read-only field computed by Shopify)
+    expect(lineItem.applied_discount.amount).toBeUndefined();
+  });
+
+  // Test A — string variantId in memberDiscounts also matches number variant_id on item
+  it('normalizes variantId keys to strings to prevent type mismatch', async () => {
+    mockFetch();
+
+    const cartWithStringKey = {
+      ...baseCart,
+      // variantId sent as string "1", item.variant_id is number 1
+      memberDiscounts: [{ variantId: '1', discountCents: 300, title: 'String-key discount' }],
+    };
+
+    await call(
+      new Request('http://example.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cartWithStringKey),
+      })
+    );
+
+    const [, fetchOpts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(fetchOpts.body);
+    const lineItem = body.draft_order.line_items[0];
+
+    expect(lineItem.applied_discount).toBeDefined();
+    expect(lineItem.applied_discount.value).toBe('3.00');
+  });
+
+  // Test B — promoAmountCents applied as order-level discount
+  it('adds order-level applied_discount when promoAmountCents > 0', async () => {
+    mockFetch();
+
+    const cartWithPromo = {
+      ...baseCart,
+      promoCode: 'SAVE5',
+      promoAmountCents: 500,
+    };
+
+    await call(
+      new Request('http://example.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cartWithPromo),
+      })
+    );
+
+    const [, fetchOpts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(fetchOpts.body);
+    const discount = body.draft_order.applied_discount;
+
+    expect(discount).toBeDefined();
+    expect(discount.value_type).toBe('fixed_amount');
+    expect(discount.value).toBe('5.00');
+    expect(discount.description).toContain('SAVE5');
+
+    // amount must NOT be sent (read-only field computed by Shopify)
+    expect(discount.amount).toBeUndefined();
+  });
+
+  // Test B — no order-level discount when promoAmountCents is 0 or absent
+  it('omits order-level applied_discount when promoAmountCents is 0', async () => {
+    mockFetch();
+
+    await call(
+      new Request('http://example.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...baseCart, promoAmountCents: 0 }),
+      })
+    );
+
+    const [, fetchOpts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(fetchOpts.body);
+    expect(body.draft_order.applied_discount).toBeUndefined();
+  });
+
+  // Test C — freeShipping zeros the shipping line
+  it('sets shipping_line.price to 0.00 when freeShipping is true', async () => {
+    mockFetch();
+
+    const cartWithFreeShipping = {
+      ...baseCart,
+      shippingLine: { title: 'Standard Freight', price: '25.00' },
+      freeShipping: true,
+    };
+
+    await call(
+      new Request('http://example.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cartWithFreeShipping),
+      })
+    );
+
+    const [, fetchOpts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(fetchOpts.body);
+    const shippingLine = body.draft_order.shipping_line;
+
+    // price must be zeroed out
+    expect(shippingLine.price).toBe('0.00');
+
+    // title must be preserved from the provided shippingLine
+    expect(shippingLine.title).toBe('Standard Freight');
+  });
 });
