@@ -166,3 +166,9 @@ dist
 !.env.example
 .wrangler/
 .dev.vars
+
+# Symlinks to shopify theme repo
+docs/company
+
+# macOS
+.DS_Store
