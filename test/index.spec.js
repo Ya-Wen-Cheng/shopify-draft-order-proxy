@@ -128,11 +128,8 @@ describe('POST /', () => {
     tags: 'draft-order',
   };
 
-  function mockFetch(draftOrder = mockDraftOrder, shopifyStatus = 201, invoiceOk = true) {
+  function mockFetch(draftOrder = mockDraftOrder, shopifyStatus = 201) {
     globalThis.fetch.mockImplementation((url) => {
-      if (url.includes('/send_invoice.json')) {
-        return Promise.resolve(new Response(JSON.stringify({ draft_order_invoice: {} }), { status: invoiceOk ? 200 : 500 }));
-      }
       // Shopify create draft order call
       return Promise.resolve(
         new Response(JSON.stringify({ draft_order: draftOrder }), { status: shopifyStatus })
@@ -223,7 +220,25 @@ describe('POST /', () => {
     expect(body.draft_order.tags).toContain('ach');
   });
 
-  it('sends invoice via Shopify on 201', async () => {
+  it('does not send invoice after draft order creation', async () => {
+    mockFetch();
+
+    const res = await call(
+      new Request('http://example.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(baseCart),
+      })
+    );
+
+    expect(res.status).toBe(201);
+    const invoiceCall = globalThis.fetch.mock.calls.find(
+      ([url]) => url.includes('/send_invoice.json')
+    );
+    expect(invoiceCall).toBeUndefined();
+  });
+
+  it('includes RD-price-check-pending in tags', async () => {
     mockFetch();
 
     await call(
@@ -234,57 +249,9 @@ describe('POST /', () => {
       })
     );
 
-    const invoiceCall = globalThis.fetch.mock.calls.find(
-      ([url]) => url.includes('/send_invoice.json')
-    );
-    expect(invoiceCall).toBeDefined();
-    const [invoiceUrl, invoiceOpts] = invoiceCall;
-    expect(invoiceUrl).toContain('/draft_orders/99/send_invoice.json');
-    expect(invoiceOpts.method).toBe('POST');
-    expect(invoiceOpts.headers['X-Shopify-Access-Token']).toBe('test-token');
-    const invoiceBody = JSON.parse(invoiceOpts.body);
-    expect(invoiceBody).toEqual({ draft_order_invoice: {} });
-  });
-
-  it('does not send invoice when Shopify returns non-201', async () => {
-    globalThis.fetch.mockImplementation((url) => {
-      if (url.includes('/send_invoice.json')) {
-        return Promise.resolve(new Response(JSON.stringify({ draft_order_invoice: {} }), { status: 200 }));
-      }
-      return Promise.resolve(
-        new Response(JSON.stringify({ errors: ['Validation failed'] }), { status: 422 })
-      );
-    });
-
-    await call(
-      new Request('http://example.com/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(baseCart),
-      })
-    );
-
-    const invoiceCall = globalThis.fetch.mock.calls.find(
-      ([url]) => url.includes('/send_invoice.json')
-    );
-    expect(invoiceCall).toBeUndefined();
-  });
-
-  it('invoice failure does not affect draft order response', async () => {
-    mockFetch(mockDraftOrder, 201, false); // send_invoice returns 500
-
-    const res = await call(
-      new Request('http://example.com/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(baseCart),
-      })
-    );
-
-    // Worker still returns 201 with draft order
-    expect(res.status).toBe(201);
-    const data = await res.json();
-    expect(data.draft_order.id).toBe(99);
+    const [, fetchOpts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(fetchOpts.body);
+    expect(body.draft_order.tags).toContain('RD-price-check-pending');
   });
 
   // Test A — memberDiscounts applied per line item

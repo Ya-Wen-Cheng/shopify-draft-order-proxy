@@ -187,7 +187,7 @@ export default {
             country:    addr.country    || 'US',
             zip:        addr.zip        || '',
           },
-          tags: [cart.tags, cart.paymentMethod?.id].filter(Boolean).join(', '),
+          tags: [cart.tags, cart.paymentMethod?.id, 'RD-price-check-pending'].filter(Boolean).join(', '),
           ...(note                 && { note }),
           // Change C: Zero out shipping_line.price when freeShipping is true
           ...(cart.shippingLine && {
@@ -224,20 +224,6 @@ export default {
         });
 
         const result = await res.json();
-
-        // Send draft order invoice via Shopify (non-blocking)
-        if (res.status === 201 && result.draft_order) {
-          ctx.waitUntil(
-            fetch(`${restBase}/draft_orders/${result.draft_order.id}/send_invoice.json`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Shopify-Access-Token': token,
-              },
-              body: JSON.stringify({ draft_order_invoice: {} }),
-            }).catch(err => console.error('[Invoice] Failed to send:', err))
-          );
-        }
 
         return json(result, res.status);
       } catch (err) {
