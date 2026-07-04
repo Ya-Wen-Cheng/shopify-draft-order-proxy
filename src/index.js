@@ -8,8 +8,10 @@
  *   POST /?action=signup                    → guest membership signup (creates customer)
  *   POST /?action=activate-membership       → activate membership for logged-in customer
  *   POST /                                  → create a draft order from cart
+ *   POST /webhook/cost-update               → Shopify inventory_items/update webhook
  */
 
+export { CostChangeHandler } from './cost-change-handler.js';
 
 // ── GraphQL helpers ───────────────────────────────────────────────────────────
 
@@ -95,6 +97,33 @@ function json(data, status = 200) {
   });
 }
 
+// ── Shopify webhook HMAC verification ───────────────────────────────────────
+
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+async function verifyShopifyHmac(rawBody, hmacHeader, secret) {
+  if (!hmacHeader || !secret) return false;
+
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign']
+  );
+  const signature = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(rawBody));
+  const computedHmac = btoa(String.fromCharCode(...new Uint8Array(signature)));
+
+  return timingSafeEqual(computedHmac, hmacHeader);
+}
+
 export default {
   async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') {
@@ -108,6 +137,38 @@ export default {
     const url    = new URL(request.url);
     const id     = url.searchParams.get('id');
     const action = url.searchParams.get('action');
+
+    // ── POST /webhook/cost-update — Shopify inventory_items/update ─────
+    if (request.method === 'POST' && url.pathname === '/webhook/cost-update') {
+      const rawBody   = await request.text();
+      const hmacHeader = request.headers.get('X-Shopify-Hmac-Sha256');
+      const valid = await verifyShopifyHmac(rawBody, hmacHeader, env.SHOPIFY_WEBHOOK_SECRET);
+
+      if (!valid) {
+        return json({ error: 'Invalid HMAC signature' }, 401);
+      }
+
+      let payload;
+      try {
+        payload = JSON.parse(rawBody);
+      } catch (err) {
+        return json({ error: 'Invalid JSON payload' }, 400);
+      }
+
+      if (payload.cost === null || payload.cost === undefined) {
+        return json({ ok: true }, 200);
+      }
+
+      const doId   = env.COST_CHANGE_HANDLER.idFromName(String(payload.id));
+      const stub   = env.COST_CHANGE_HANDLER.get(doId);
+      const doRes  = await stub.fetch('https://cost-change-handler/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: rawBody,
+      });
+      const doData = await doRes.json().catch(() => ({}));
+      return json(doData, doRes.status);
+    }
 
     // ── GET /?id={draft_order_id} ─────────────────────────────────────
     if (request.method === 'GET') {

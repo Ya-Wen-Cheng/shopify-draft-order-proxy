@@ -6,13 +6,21 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "shopify-draft-order-proxy",
 	"main": "src/index.js",
-	"compatibility_date": "2026-04-06",
+	"compatibility_date": "2026-07-01",
 	"observability": {
 		"enabled": true
 	},
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"
+	],
+	"durable_objects": {
+		"bindings": [
+			{ "name": "COST_CHANGE_HANDLER", "class_name": "CostChangeHandler" }
+		]
+	},
+	"migrations": [
+		{ "tag": "v1", "new_classes": ["CostChangeHandler"] }
 	]
 	/**
 	 * Smart Placement
