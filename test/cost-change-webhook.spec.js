@@ -76,10 +76,35 @@ describe('POST /webhook/cost-update', () => {
   });
 
   it('forwards valid requests to the CostChangeHandler DO and returns its status', async () => {
+    const readData = {
+      data: {
+        inventoryItem: {
+          id: 'gid://shopify/InventoryItem/123',
+          variant: {
+            id: 'gid://shopify/ProductVariant/456',
+            title: 'Default Title',
+            product: {
+              id: 'gid://shopify/Product/789',
+              variantsCount: { count: 1 },
+              lastKnownCost: { value: JSON.stringify({ '456': '4.00' }) },
+              costChangeLog: { value: '' },
+              costChangeSource: { value: '' },
+            },
+          },
+        },
+      },
+    };
+    const writeData = { data: { metafieldsSet: { metafields: [], userErrors: [] } } };
+    let callCount = 0;
+    globalThis.fetch.mockImplementation(() => {
+      callCount += 1;
+      return Promise.resolve(
+        new Response(JSON.stringify(callCount === 1 ? readData : writeData), { status: 200 })
+      );
+    });
+
     const req = await webhookRequest({ id: 123, cost: '5.00' });
     const res = await call(req);
-    // Stub DO returns 200 OK by default (default DO fetch stubbed via Miniflare below is exercised
-    // through the real durable object binding configured in wrangler.jsonc for tests).
     expect(res.status).toBe(200);
   });
 });
