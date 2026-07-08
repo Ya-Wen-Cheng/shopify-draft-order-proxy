@@ -563,21 +563,83 @@ describe('POST /?action=activate-membership', () => {
     });
   }
 
-  it('happy path — calls customers/{id}.json PUT and returns success', async () => {
-    globalThis.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ customer: { id: 5001, note: 'membership-signup' } }), { status: 200 })
-    );
+  // Helper: mock GET then PUT with given existing note
+  function mockGetThenPut(existingNote = null, putStatus = 200) {
+    let callIndex = 0;
+    globalThis.fetch.mockImplementation((url, opts) => {
+      const method = (opts && opts.method) ? opts.method.toUpperCase() : 'GET';
+      if (method === 'GET') {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ customer: { id: 5001, note: existingNote } }),
+            { status: 200 }
+          )
+        );
+      }
+      // PUT
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({ customer: { id: 5001, note: 'membership-signup' } }),
+          { status: putStatus }
+        )
+      );
+    });
+  }
+
+  it('happy path — GETs customer first, then PUTs combined note and returns success', async () => {
+    mockGetThenPut(null); // no existing note
 
     const res = await call(activateRequest({ customer_id: 5001 }));
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toEqual({ success: true });
 
-    const [url, opts] = globalThis.fetch.mock.calls[0];
-    expect(url).toContain('/customers/5001.json');
-    expect(opts.method).toBe('PUT');
-    const body = JSON.parse(opts.body);
-    expect(body).toEqual({ customer: { id: 5001, note: 'membership-signup' } });
+    // First call must be GET
+    const [getUrl, getOpts] = globalThis.fetch.mock.calls[0];
+    expect(getUrl).toContain('/customers/5001.json');
+    expect((getOpts && getOpts.method) || 'GET').not.toBe('PUT');
+
+    // Second call must be PUT with note = 'membership-signup'
+    const [putUrl, putOpts] = globalThis.fetch.mock.calls[1];
+    expect(putUrl).toContain('/customers/5001.json');
+    expect(putOpts.method).toBe('PUT');
+    const putBody = JSON.parse(putOpts.body);
+    expect(putBody).toEqual({ customer: { id: 5001, note: 'membership-signup' } });
+  });
+
+  it('prepends membership-signup to existing note', async () => {
+    mockGetThenPut('Some existing note');
+
+    await call(activateRequest({ customer_id: 5001 }));
+
+    const [, putOpts] = globalThis.fetch.mock.calls[1];
+    const putBody = JSON.parse(putOpts.body);
+    expect(putBody.customer.note).toBe('membership-signup\nSome existing note');
+  });
+
+  it('skips PUT and returns success when note already starts with membership-signup', async () => {
+    mockGetThenPut('membership-signup\nOld note');
+
+    const res = await call(activateRequest({ customer_id: 5001 }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data).toEqual({ success: true });
+
+    // Only the GET call should have been made — no PUT
+    expect(globalThis.fetch.mock.calls).toHaveLength(1);
+  });
+
+  it('accepts customer_id as a string and coerces it to a number', async () => {
+    mockGetThenPut(null);
+
+    const res = await call(activateRequest({ customer_id: '5001' }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data).toEqual({ success: true });
+
+    // URLs should use the coerced numeric id (no quotes in URL)
+    const [getUrl] = globalThis.fetch.mock.calls[0];
+    expect(getUrl).toContain('/customers/5001.json');
   });
 
   it('returns 400 with "required" message when customer_id is missing', async () => {
@@ -604,7 +666,7 @@ describe('POST /?action=activate-membership', () => {
     expect(data.message).toBe('customer_id must be a positive integer');
   });
 
-  it('returns 422 shopify_error when Shopify returns non-200', async () => {
+  it('returns 422 shopify_error when Shopify GET returns non-200', async () => {
     globalThis.fetch.mockResolvedValue(
       new Response(JSON.stringify({ errors: 'Customer not found' }), { status: 404 })
     );

@@ -222,28 +222,54 @@ export default {
 
       const { customer_id } = body;
 
-      // Validate customer_id — check presence first, then type/range
+      // Validate customer_id — check presence first, then coerce and validate
       if (customer_id == null || customer_id === '') {
         return json({ error: 'validation', message: 'customer_id is required' }, 400);
       }
-      if (!Number.isInteger(customer_id) || customer_id <= 0) {
+      const id = Number(customer_id);
+      if (!Number.isFinite(id) || !Number.isInteger(id) || id <= 0) {
         return json({ error: 'validation', message: 'customer_id must be a positive integer' }, 400);
       }
 
       try {
-        const res = await fetch(`${restBase}/customers/${customer_id}.json`, {
+        // Step 1: GET current customer note to avoid clobbering it
+        const getRes = await fetch(`${restBase}/customers/${id}.json`, {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': token,
+          },
+        });
+
+        const getResult = await getRes.json();
+
+        if (getRes.status !== 200) {
+          return json({ error: 'shopify_error', message: JSON.stringify(getResult.errors) }, 422);
+        }
+
+        const existingNote = getResult.customer.note || '';
+
+        // Step 2: Idempotency check — skip PUT if already marked
+        if (existingNote.startsWith('membership-signup')) {
+          return json({ success: true });
+        }
+
+        // Step 3: Prepend marker to existing note
+        const newNote = existingNote ? `membership-signup\n${existingNote}` : 'membership-signup';
+
+        // Step 4: PUT the combined note
+        const putRes = await fetch(`${restBase}/customers/${id}.json`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
             'X-Shopify-Access-Token': token,
           },
-          body: JSON.stringify({ customer: { id: customer_id, note: 'membership-signup' } }),
+          body: JSON.stringify({ customer: { id, note: newNote } }),
         });
 
-        const result = await res.json();
+        const putResult = await putRes.json();
 
-        if (res.status !== 200) {
-          return json({ error: 'shopify_error', message: JSON.stringify(result.errors) }, 422);
+        if (putRes.status !== 200) {
+          return json({ error: 'shopify_error', message: JSON.stringify(putResult.errors) }, 422);
         }
 
         return json({ success: true });
