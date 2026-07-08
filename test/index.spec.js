@@ -565,7 +565,6 @@ describe('POST /?action=activate-membership', () => {
 
   // Helper: mock GET then PUT with given existing note
   function mockGetThenPut(existingNote = null, putStatus = 200) {
-    let callIndex = 0;
     globalThis.fetch.mockImplementation((url, opts) => {
       const method = (opts && opts.method) ? opts.method.toUpperCase() : 'GET';
       if (method === 'GET') {
