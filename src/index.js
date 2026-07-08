@@ -2,10 +2,12 @@
  * AIGO Shopify Draft Order Proxy
  *
  * Routes:
- *   GET  /?id={draft_order_id}      → fetch a draft order
- *   PUT  /?id={id}&action=complete  → complete a draft order → real order
- *   POST /?action=add-address       → add address to customer profile
- *   POST /                          → create a draft order from cart
+ *   GET  /?id={draft_order_id}              → fetch a draft order
+ *   PUT  /?id={id}&action=complete          → complete a draft order → real order
+ *   POST /?action=add-address               → add address to customer profile
+ *   POST /?action=signup                    → guest membership signup (creates customer)
+ *   POST /?action=activate-membership       → activate membership for logged-in customer
+ *   POST /                                  → create a draft order from cart
  */
 
 
@@ -125,6 +127,123 @@ export default {
         }
 
         return json({ success: true, data: result.data });
+      } catch (err) {
+        return json({ error: err.message }, 500);
+      }
+    }
+
+    // ── POST /?action=signup — guest membership signup ────────────────
+    if (request.method === 'POST' && action === 'signup') {
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: 'validation', message: 'Invalid JSON body' }, 400);
+      }
+
+      const { first_name, last_name, email, phone, business_name, address = {} } = body;
+
+      // Validate required fields
+      const missing = [];
+      if (!first_name)        missing.push('first_name');
+      if (!last_name)         missing.push('last_name');
+      if (!email)             missing.push('email');
+      if (!address.address1)  missing.push('address.address1');
+      if (!address.city)      missing.push('address.city');
+      if (!address.province)  missing.push('address.province');
+      if (!address.zip)       missing.push('address.zip');
+
+      if (missing.length > 0) {
+        return json({ error: 'validation', message: `Missing required fields: ${missing.join(', ')}` }, 400);
+      }
+
+      // Validate email format
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return json({ error: 'validation', message: 'Invalid email address' }, 400);
+      }
+
+      const customerPayload = {
+        customer: {
+          first_name,
+          last_name,
+          email,
+          phone: phone || '',
+          note: business_name
+            ? `membership-signup\nBusiness: ${business_name}`
+            : 'membership-signup',
+          addresses: [{
+            first_name,
+            last_name,
+            address1: address.address1,
+            address2: address.address2 || '',
+            city: address.city,
+            province: address.province,
+            zip: address.zip,
+            country: address.country || 'United States',
+            phone: phone || '',
+          }],
+        },
+      };
+
+      try {
+        const res = await fetch(`${restBase}/customers.json`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': token,
+          },
+          body: JSON.stringify(customerPayload),
+        });
+
+        const result = await res.json();
+
+        if (res.status === 422 && result.errors?.email) {
+          return json({ error: 'duplicate_email', message: 'An account with this email already exists.' }, 409);
+        }
+
+        if (res.status !== 201) {
+          return json({ error: 'shopify_error', message: JSON.stringify(result.errors) }, 422);
+        }
+
+        return json({ success: true, customer: { id: result.customer.id, email: result.customer.email } });
+      } catch (err) {
+        return json({ error: err.message }, 500);
+      }
+    }
+
+    // ── POST /?action=activate-membership — activate for logged-in customer ──
+    if (request.method === 'POST' && action === 'activate-membership') {
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: 'validation', message: 'Invalid JSON body' }, 400);
+      }
+
+      const { customer_id } = body;
+
+      // Validate customer_id is a positive integer
+      if (!customer_id || !Number.isInteger(customer_id) || customer_id <= 0) {
+        return json({ error: 'validation', message: 'customer_id is required' }, 400);
+      }
+
+      try {
+        const res = await fetch(`${restBase}/customers/${customer_id}.json`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': token,
+          },
+          body: JSON.stringify({ customer: { id: customer_id, note: 'membership-signup' } }),
+        });
+
+        const result = await res.json();
+
+        if (res.status !== 200) {
+          return json({ error: 'shopify_error', message: JSON.stringify(result.errors) }, 422);
+        }
+
+        return json({ success: true });
       } catch (err) {
         return json({ error: err.message }, 500);
       }

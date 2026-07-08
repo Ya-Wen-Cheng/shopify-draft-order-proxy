@@ -422,3 +422,179 @@ describe('POST /', () => {
     expect(shippingLine.title).toBe('Standard Freight');
   });
 });
+
+// ── POST /?action=signup ──────────────────────────────────────────────────────
+
+describe('POST /?action=signup', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
+
+  const baseSignup = {
+    first_name: 'Jane',
+    last_name: 'Doe',
+    email: 'jane@example.com',
+    phone: '555-1234',
+    business_name: 'Joe Cafe',
+    address: {
+      address1: '123 Main St',
+      address2: 'Suite 1',
+      city: 'Los Angeles',
+      province: 'CA',
+      zip: '90001',
+      country: 'United States',
+    },
+  };
+
+  function mockShopifyCustomer(customer = { id: 7001, email: 'jane@example.com' }, status = 201) {
+    globalThis.fetch.mockResolvedValue(
+      new Response(JSON.stringify({ customer }), { status })
+    );
+  }
+
+  function signupRequest(body) {
+    return new Request('http://example.com/?action=signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('happy path — calls customers.json and returns success with customer id and email', async () => {
+    mockShopifyCustomer({ id: 7001, email: 'jane@example.com' });
+
+    const res = await call(signupRequest(baseSignup));
+    expect(res.status).toBe(200);
+
+    const data = await res.json();
+    expect(data).toEqual({ success: true, customer: { id: 7001, email: 'jane@example.com' } });
+
+    const [url, opts] = globalThis.fetch.mock.calls[0];
+    expect(url).toContain('/customers.json');
+    expect(opts.method).toBe('POST');
+    expect(opts.headers['X-Shopify-Access-Token']).toBe('test-token');
+  });
+
+  it('returns 400 validation error when email is missing', async () => {
+    const { email: _email, ...noEmail } = baseSignup;
+    const res = await call(signupRequest(noEmail));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe('validation');
+    expect(data.message).toContain('email');
+  });
+
+  it('returns 400 validation error for invalid email format', async () => {
+    const res = await call(signupRequest({ ...baseSignup, email: 'not-an-email' }));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe('validation');
+    expect(data.message).toContain('Invalid email');
+  });
+
+  it('returns 409 duplicate_email when Shopify returns 422 with errors.email', async () => {
+    globalThis.fetch.mockResolvedValue(
+      new Response(JSON.stringify({ errors: { email: ['has already been taken'] } }), { status: 422 })
+    );
+
+    const res = await call(signupRequest(baseSignup));
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.error).toBe('duplicate_email');
+  });
+
+  it('builds note with business name', async () => {
+    mockShopifyCustomer();
+
+    await call(signupRequest({ ...baseSignup, business_name: 'Joe Cafe' }));
+
+    const [, opts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(opts.body);
+    expect(body.customer.note).toBe('membership-signup\nBusiness: Joe Cafe');
+  });
+
+  it('builds note without business name', async () => {
+    mockShopifyCustomer();
+    const { business_name: _bn, ...noBusinessName } = baseSignup;
+
+    await call(signupRequest(noBusinessName));
+
+    const [, opts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(opts.body);
+    expect(body.customer.note).toBe('membership-signup');
+  });
+
+  it('includes address in customer payload', async () => {
+    mockShopifyCustomer();
+
+    await call(signupRequest(baseSignup));
+
+    const [, opts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(opts.body);
+    expect(body.customer.addresses).toHaveLength(1);
+    expect(body.customer.addresses[0]).toMatchObject({
+      address1: '123 Main St',
+      city: 'Los Angeles',
+      province: 'CA',
+      zip: '90001',
+    });
+  });
+
+  it('defaults country to United States when omitted', async () => {
+    mockShopifyCustomer();
+    const { address: { country: _c, ...addressNoCountry }, ...rest } = baseSignup;
+
+    await call(signupRequest({ ...rest, address: addressNoCountry }));
+
+    const [, opts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(opts.body);
+    expect(body.customer.addresses[0].country).toBe('United States');
+  });
+});
+
+// ── POST /?action=activate-membership ────────────────────────────────────────
+
+describe('POST /?action=activate-membership', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
+
+  function activateRequest(body) {
+    return new Request('http://example.com/?action=activate-membership', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it('happy path — calls customers/{id}.json PUT and returns success', async () => {
+    globalThis.fetch.mockResolvedValue(
+      new Response(JSON.stringify({ customer: { id: 5001, note: 'membership-signup' } }), { status: 200 })
+    );
+
+    const res = await call(activateRequest({ customer_id: 5001 }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data).toEqual({ success: true });
+
+    const [url, opts] = globalThis.fetch.mock.calls[0];
+    expect(url).toContain('/customers/5001.json');
+    expect(opts.method).toBe('PUT');
+    const body = JSON.parse(opts.body);
+    expect(body).toEqual({ customer: { id: 5001, note: 'membership-signup' } });
+  });
+
+  it('returns 400 validation error when customer_id is missing', async () => {
+    const res = await call(activateRequest({}));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe('validation');
+  });
+
+  it('returns 422 shopify_error when Shopify returns non-200', async () => {
+    globalThis.fetch.mockResolvedValue(
+      new Response(JSON.stringify({ errors: 'Customer not found' }), { status: 404 })
+    );
+
+    const res = await call(activateRequest({ customer_id: 9999 }));
+    expect(res.status).toBe(422);
+    const data = await res.json();
+    expect(data.error).toBe('shopify_error');
+  });
+});
