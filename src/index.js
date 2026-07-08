@@ -226,14 +226,14 @@ export default {
       if (customer_id == null || customer_id === '') {
         return json({ error: 'validation', message: 'customer_id is required' }, 400);
       }
-      const id = Number(customer_id);
-      if (!Number.isFinite(id) || !Number.isInteger(id) || id <= 0) {
+      const customerId = Number(customer_id);
+      if (!Number.isFinite(customerId) || !Number.isInteger(customerId) || customerId <= 0) {
         return json({ error: 'validation', message: 'customer_id must be a positive integer' }, 400);
       }
 
       try {
         // Step 1: GET current customer note to avoid clobbering it
-        const getRes = await fetch(`${restBase}/customers/${id}.json`, {
+        const getRes = await fetch(`${restBase}/customers/${customerId}.json`, {
           headers: {
             'Content-Type': 'application/json',
             'X-Shopify-Access-Token': token,
@@ -257,13 +257,13 @@ export default {
         const newNote = existingNote ? `membership-signup\n${existingNote}` : 'membership-signup';
 
         // Step 4: PUT the combined note
-        const putRes = await fetch(`${restBase}/customers/${id}.json`, {
+        const putRes = await fetch(`${restBase}/customers/${customerId}.json`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
             'X-Shopify-Access-Token': token,
           },
-          body: JSON.stringify({ customer: { id, note: newNote } }),
+          body: JSON.stringify({ customer: { id: customerId, note: newNote } }),
         });
 
         const putResult = await putRes.json();

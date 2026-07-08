@@ -482,6 +482,19 @@ describe('POST /?action=signup', () => {
     expect(data.message).toContain('email');
   });
 
+  it('returns 400 when address field is missing', async () => {
+    const body = signupRequest({
+      first_name: 'Test', last_name: 'User', email: 'test@example.com',
+      address: { address1: '123 Main St', city: 'NYC', zip: '10001' }
+      // province deliberately omitted
+    });
+    const res = await call(body);
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe('validation');
+    expect(data.message).toMatch(/address\.province/i);
+  });
+
   it('returns 400 validation error for invalid email format', async () => {
     const res = await call(signupRequest({ ...baseSignup, email: 'not-an-email' }));
     expect(res.status).toBe(400);
