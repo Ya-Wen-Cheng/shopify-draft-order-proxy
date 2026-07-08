@@ -222,9 +222,12 @@ export default {
 
       const { customer_id } = body;
 
-      // Validate customer_id is a positive integer
-      if (!customer_id || !Number.isInteger(customer_id) || customer_id <= 0) {
+      // Validate customer_id — check presence first, then type/range
+      if (customer_id == null || customer_id === '') {
         return json({ error: 'validation', message: 'customer_id is required' }, 400);
+      }
+      if (!Number.isInteger(customer_id) || customer_id <= 0) {
+        return json({ error: 'validation', message: 'customer_id must be a positive integer' }, 400);
       }
 
       try {

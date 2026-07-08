@@ -580,11 +580,28 @@ describe('POST /?action=activate-membership', () => {
     expect(body).toEqual({ customer: { id: 5001, note: 'membership-signup' } });
   });
 
-  it('returns 400 validation error when customer_id is missing', async () => {
+  it('returns 400 with "required" message when customer_id is missing', async () => {
     const res = await call(activateRequest({}));
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toBe('validation');
+    expect(data.message).toBe('customer_id is required');
+  });
+
+  it('returns 400 with "positive integer" message when customer_id is zero', async () => {
+    const res = await call(activateRequest({ customer_id: 0 }));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe('validation');
+    expect(data.message).toBe('customer_id must be a positive integer');
+  });
+
+  it('returns 400 with "positive integer" message when customer_id is negative', async () => {
+    const res = await call(activateRequest({ customer_id: -1 }));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe('validation');
+    expect(data.message).toBe('customer_id must be a positive integer');
   });
 
   it('returns 422 shopify_error when Shopify returns non-200', async () => {
