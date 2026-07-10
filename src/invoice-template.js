@@ -1,0 +1,86 @@
+/**
+ * Printable invoice for a real Shopify Order (G19 — /invoice/{order_id})
+ * 8.5x11, signature line, weight-line-item properties rendered.
+ */
+
+function escapeHtml(str) {
+  return String(str ?? '').replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+export function renderInvoiceHtml(order) {
+  const tags = (order.tags || '').split(',').map(t => t.trim().toLowerCase());
+  const isMember = tags.includes('member');
+  const shipping = order.shipping_address || {};
+  const shippingLine = (order.shipping_lines || [])[0];
+  const deliveryFee = isMember ? '0.00' : (shippingLine ? shippingLine.price : '0.00');
+
+  const lineItemsHtml = (order.line_items || []).map(li => {
+    const weightProp = (li.properties || []).find(p => /weight/i.test(p.name));
+    const lineTotal = (Number(li.price) * Number(li.quantity)).toFixed(2);
+    return `
+      <tr>
+        <td>
+          ${escapeHtml(li.title)}${li.variant_title ? ' — ' + escapeHtml(li.variant_title) : ''}
+          ${weightProp ? `<div class="weight-note">Weight (lb): ${escapeHtml(weightProp.value)}</div>` : ''}
+        </td>
+        <td>${li.quantity}</td>
+        <td>$${escapeHtml(li.price)}</td>
+        <td>$${lineTotal}</td>
+      </tr>`;
+  }).join('');
+
+  return `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Invoice ${escapeHtml(order.name)}</title>
+<style>
+  @page { size: 8.5in 11in; margin: 0.5in; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #111; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .meta { color: #555; font-size: 13px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  th, td { border-bottom: 1px solid #ccc; padding: 8px; text-align: left; font-size: 13px; vertical-align: top; }
+  .weight-note { font-size: 11px; color: #555; }
+  .summary { margin-top: 16px; width: 260px; margin-left: auto; }
+  .summary td { border: none; padding: 4px 8px; }
+  .signature { margin-top: 60px; page-break-inside: avoid; }
+  .signature-line { border-top: 1px solid #333; width: 300px; margin-top: 40px; }
+  .print-btn { margin-bottom: 16px; }
+  @media print {
+    .no-print { display: none; }
+  }
+</style>
+</head>
+<body>
+  <button class="print-btn no-print" onclick="window.print()">Print</button>
+  <h1>Invoice — ${escapeHtml(order.name)}</h1>
+  <div class="meta">Order date: ${escapeHtml(order.created_at)}</div>
+  <p>
+    ${escapeHtml(shipping.first_name)} ${escapeHtml(shipping.last_name)}<br>
+    ${escapeHtml(shipping.address1)} ${escapeHtml(shipping.address2)}<br>
+    ${escapeHtml(shipping.city)}, ${escapeHtml(shipping.province)} ${escapeHtml(shipping.zip)}<br>
+    ${escapeHtml(shipping.phone)}
+  </p>
+
+  <table>
+    <thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Line Total</th></tr></thead>
+    <tbody>${lineItemsHtml}</tbody>
+  </table>
+
+  <table class="summary">
+    <tr><td>Subtotal</td><td>$${escapeHtml(order.subtotal_price || '0.00')}</td></tr>
+    <tr><td>Delivery</td><td>$${deliveryFee}</td></tr>
+    <tr><td>Tax</td><td>$${escapeHtml(order.total_tax || '0.00')}</td></tr>
+    <tr><td><strong>Total</strong></td><td><strong>$${escapeHtml(order.total_price || '0.00')}</strong></td></tr>
+  </table>
+
+  <div class="signature">
+    <div class="signature-line"></div>
+    <div>Customer Signature</div>
+  </div>
+</body>
+</html>`;
+}

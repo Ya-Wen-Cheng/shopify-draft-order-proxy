@@ -8,8 +8,17 @@
  *   POST /?action=signup                    → guest membership signup (creates customer)
  *   POST /?action=activate-membership       → activate membership for logged-in customer
  *   POST /                                  → create a draft order from cart
+ *
+ *   GET  /pickup                            → Pickup Assistant mobile UI (G19)
+ *   GET  /pickup/data                       → open draft orders tagged draft-order-tab
+ *   PUT  /pickup/update                     → update draft order line items (fetch-then-merge)
+ *   PUT  /pickup/complete                   → complete draft order, tag resulting order `sourced`
+ *   GET  /invoice/{order_id}                → printable order invoice
  */
 
+import { getPickupData, updateLineItems, completeDraftOrder } from './pickup.js';
+import { renderPickupPage } from './pickup-template.js';
+import { renderInvoiceHtml } from './invoice-template.js';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -37,6 +46,73 @@ export default {
     const url    = new URL(request.url);
     const id     = url.searchParams.get('id');
     const action = url.searchParams.get('action');
+
+    // ── GET /pickup — Pickup Assistant mobile UI ───────────────────────
+    if (url.pathname === '/pickup' && request.method === 'GET') {
+      return new Response(renderPickupPage(), { headers: { ...CORS, 'Content-Type': 'text/html; charset=utf-8' } });
+    }
+
+    // ── GET /pickup/data — open draft orders tagged draft-order-tab ───
+    if (url.pathname === '/pickup/data' && request.method === 'GET') {
+      try {
+        const draftOrders = await getPickupData(restBase, token);
+        return json({ draft_orders: draftOrders });
+      } catch (err) {
+        return json({ error: err.message }, err.status || 500);
+      }
+    }
+
+    // ── PUT /pickup/update — fetch-then-merge line item updates ───────
+    if (url.pathname === '/pickup/update' && request.method === 'PUT') {
+      try {
+        const body = await request.json();
+        const { draft_order_id, updates } = body;
+        if (!draft_order_id || !Array.isArray(updates)) {
+          return json({ error: 'Missing draft_order_id or updates' }, 400);
+        }
+        const result = await updateLineItems(restBase, token, draft_order_id, updates);
+        return json(result.body, result.status);
+      } catch (err) {
+        return json({ error: err.message }, 500);
+      }
+    }
+
+    // ── PUT /pickup/complete — complete draft order, tag order `sourced` ──
+    if (url.pathname === '/pickup/complete' && request.method === 'PUT') {
+      try {
+        const body = await request.json();
+        const { draft_order_id } = body;
+        if (!draft_order_id) {
+          return json({ error: 'Missing draft_order_id' }, 400);
+        }
+        const result = await completeDraftOrder(restBase, token, draft_order_id);
+        return json(result.body, result.status);
+      } catch (err) {
+        return json({ error: err.message }, 500);
+      }
+    }
+
+    // ── GET /invoice/{order_id} — printable invoice ────────────────────
+    if (url.pathname.startsWith('/invoice/') && request.method === 'GET') {
+      const orderId = url.pathname.slice('/invoice/'.length);
+      if (!orderId) return json({ error: 'Missing order id' }, 400);
+
+      try {
+        const res = await fetch(`${restBase}/orders/${orderId}.json`, {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Shopify-Access-Token': token,
+          },
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          return json({ error: 'shopify_error', message: JSON.stringify(data.errors) }, res.status);
+        }
+        return new Response(renderInvoiceHtml(data.order), { headers: { ...CORS, 'Content-Type': 'text/html; charset=utf-8' } });
+      } catch (err) {
+        return json({ error: err.message }, 500);
+      }
+    }
 
     // ── GET /?id={draft_order_id} ─────────────────────────────────────
     if (request.method === 'GET') {
