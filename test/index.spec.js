@@ -25,50 +25,6 @@ describe('OPTIONS preflight', () => {
   });
 });
 
-// ── GET /payment-methods ──────────────────────────────────────────────────────
-
-describe('GET /payment-methods', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-  });
-
-  it('returns filtered manual gateways with chips', async () => {
-    globalThis.fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          payment_gateways: [
-            { id: 1, name: 'Bank Transfer (ACH)', type: 'manual', enabled: true, description: 'Wire details on invoice' },
-            { id: 2, name: 'Net 30', type: 'manual', enabled: true, description: 'Pay within 30 days' },
-            { id: 3, name: 'Credit Card', type: 'manual', enabled: true, description: 'Via invoice' },
-            { id: 4, name: 'Shopify Payments', type: 'hosted', enabled: true, description: '' },
-            { id: 5, name: 'Business Check', type: 'manual', enabled: false, description: '' },
-          ],
-        }),
-        { status: 200 }
-      )
-    );
-
-    const res = await call(new Request('http://example.com/payment-methods'));
-    expect(res.status).toBe(200);
-
-    const data = await res.json();
-    // hosted and disabled gateways are excluded
-    expect(data).toHaveLength(3);
-    expect(data[0]).toMatchObject({ id: '1', name: 'Bank Transfer (ACH)', chips: ['ACH'] });
-    expect(data[1]).toMatchObject({ id: '2', name: 'Net 30', chips: ['NET 30'] });
-    expect(data[2]).toMatchObject({ id: '3', name: 'Credit Card', chips: ['VISA', 'MC', 'AMEX'] });
-  });
-
-  it('returns 500 when Shopify errors', async () => {
-    globalThis.fetch.mockResolvedValue(new Response('Unauthorized', { status: 401 }));
-
-    const res = await call(new Request('http://example.com/payment-methods'));
-    expect(res.status).toBe(401);
-    const data = await res.json();
-    expect(data.error).toMatch(/Shopify error/);
-  });
-});
-
 // ── GET /?id= ─────────────────────────────────────────────────────────────────
 
 describe('GET /?id=', () => {
@@ -161,7 +117,7 @@ describe('POST /', () => {
     });
   });
 
-  it('appends payment method and promo to note', async () => {
+  it('appends promo code to note', async () => {
     mockFetch();
 
     const res = await call(
@@ -171,7 +127,6 @@ describe('POST /', () => {
         body: JSON.stringify({
           ...baseCart,
           note: 'Deliver before 9am',
-          paymentMethod: { id: 'net30', label: 'Invoice · Net 30' },
           promoCode: 'SUMMER10',
         }),
       })
@@ -181,8 +136,28 @@ describe('POST /', () => {
     const [, fetchOpts] = globalThis.fetch.mock.calls[0];
     const body = JSON.parse(fetchOpts.body);
     expect(body.draft_order.note).toContain('Deliver before 9am');
-    expect(body.draft_order.note).toContain('Payment method: Invoice · Net 30');
     expect(body.draft_order.note).toContain('Promo code: SUMMER10');
+  });
+
+  it('ignores paymentMethod if still sent in the payload', async () => {
+    mockFetch();
+
+    const res = await call(
+      new Request('http://example.com/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...baseCart,
+          paymentMethod: { id: 'net30', label: 'Invoice · Net 30' },
+        }),
+      })
+    );
+
+    expect(res.status).toBe(201);
+    const [, fetchOpts] = globalThis.fetch.mock.calls[0];
+    const body = JSON.parse(fetchOpts.body);
+    expect(body.draft_order.note || '').not.toContain('Payment method');
+    expect(body.draft_order.tags || '').not.toContain('net30');
   });
 
   it('includes shipping_line when provided', async () => {
@@ -202,25 +177,6 @@ describe('POST /', () => {
     const [, fetchOpts] = globalThis.fetch.mock.calls[0];
     const body = JSON.parse(fetchOpts.body);
     expect(body.draft_order.shipping_line).toMatchObject({ title: 'Standard Freight', price: '25.00' });
-  });
-
-  it('includes payment method id in tags', async () => {
-    mockFetch();
-
-    await call(
-      new Request('http://example.com/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          ...baseCart,
-          paymentMethod: { id: 'ach', label: 'Bank Transfer (ACH)' },
-        }),
-      })
-    );
-
-    const [, fetchOpts] = globalThis.fetch.mock.calls[0];
-    const body = JSON.parse(fetchOpts.body);
-    expect(body.draft_order.tags).toContain('ach');
   });
 
   it('sends invoice via Shopify on 201', async () => {
