@@ -25,17 +25,4 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
-          SHOPIFY_WEBHOOK_SECRET: ${{ secrets.SHOPIFY_WEBHOOK_SECRET }} 
-
-      - name: Deploy payment-methods worker
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          secrets: |
-            SHOPIFY_TOKEN
-          wranglerVersion: "4.80.0"
-          command: deploy --config payment-methods/wrangler.jsonc
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          SHOPIFY_TOKEN: ${{ secrets.SHOPIFY_TOKEN }}
-            
+          SHOPIFY_WEBHOOK_SECRET: ${{ secrets.SHOPIFY_WEBHOOK_SECRET }}

@@ -286,13 +286,8 @@ export default {
 
         const addr = cart.address || {};
 
-        // Build note — append payment method and promo code if present
+        // Build note — append promo code if present
         let note = cart.note || '';
-        if (cart.paymentMethod?.label) {
-          note = note
-            ? `${note}\n\nPayment method: ${cart.paymentMethod.label}`
-            : `Payment method: ${cart.paymentMethod.label}`;
-        }
         if (cart.promoCode) {
           note = note
             ? `${note}\nPromo code: ${cart.promoCode}`
@@ -335,7 +330,7 @@ export default {
             country:    addr.country    || 'US',
             zip:        addr.zip        || '',
           },
-          tags: [cart.tags, cart.paymentMethod?.id].filter(Boolean).join(', '),
+          tags: cart.tags || '',
           ...(note                 && { note }),
           // Change C: Zero out shipping_line.price when freeShipping is true
           ...(cart.shippingLine && {
