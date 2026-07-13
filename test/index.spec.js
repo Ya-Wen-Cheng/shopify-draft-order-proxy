@@ -25,50 +25,6 @@ describe('OPTIONS preflight', () => {
   });
 });
 
-// ── GET /payment-methods ──────────────────────────────────────────────────────
-
-describe('GET /payment-methods', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-  });
-
-  it('returns filtered manual gateways with chips', async () => {
-    globalThis.fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          payment_gateways: [
-            { id: 1, name: 'Bank Transfer (ACH)', type: 'manual', enabled: true, description: 'Wire details on invoice' },
-            { id: 2, name: 'Net 30', type: 'manual', enabled: true, description: 'Pay within 30 days' },
-            { id: 3, name: 'Credit Card', type: 'manual', enabled: true, description: 'Via invoice' },
-            { id: 4, name: 'Shopify Payments', type: 'hosted', enabled: true, description: '' },
-            { id: 5, name: 'Business Check', type: 'manual', enabled: false, description: '' },
-          ],
-        }),
-        { status: 200 }
-      )
-    );
-
-    const res = await call(new Request('http://example.com/payment-methods'));
-    expect(res.status).toBe(200);
-
-    const data = await res.json();
-    // hosted and disabled gateways are excluded
-    expect(data).toHaveLength(3);
-    expect(data[0]).toMatchObject({ id: '1', name: 'Bank Transfer (ACH)', chips: ['ACH'] });
-    expect(data[1]).toMatchObject({ id: '2', name: 'Net 30', chips: ['NET 30'] });
-    expect(data[2]).toMatchObject({ id: '3', name: 'Credit Card', chips: ['VISA', 'MC', 'AMEX'] });
-  });
-
-  it('returns 500 when Shopify errors', async () => {
-    globalThis.fetch.mockResolvedValue(new Response('Unauthorized', { status: 401 }));
-
-    const res = await call(new Request('http://example.com/payment-methods'));
-    expect(res.status).toBe(401);
-    const data = await res.json();
-    expect(data.error).toMatch(/Shopify error/);
-  });
-});
-
 // ── GET /?id= ─────────────────────────────────────────────────────────────────
 
 describe('GET /?id=', () => {
@@ -444,11 +400,32 @@ describe('POST /?action=signup', () => {
     },
   };
 
-  function mockShopifyCustomer(customer = { id: 7001, email: 'jane@example.com' }, status = 201) {
-    globalThis.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ customer }), { status })
-    );
+  // Sequences mock responses for ordered GraphQL calls
+  function mockGqlSequence(...responses) {
+    for (const r of responses) {
+      globalThis.fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(r), { status: 200 })
+      );
+    }
   }
+
+  const customerCreateOk = (id = 'gid://shopify/Customer/7001') => ({
+    data: { customerCreate: { customer: { id }, userErrors: [] } },
+  });
+  const customerCreateDuplicate = {
+    data: { customerCreate: { customer: null, userErrors: [{ field: ['email'], message: 'has already been taken' }] } },
+  };
+  const customerLookupOk = (id = 'gid://shopify/Customer/7001') => ({
+    data: { customers: { edges: [{ node: { id } }] } },
+  });
+  const addressCreateOk = {
+    data: { customerAddressCreate: { customerAddress: { id: 'gid://shopify/MailingAddress/1' }, userErrors: [] } },
+  };
+  const shopMeta = (count = 42) => ({
+    data: { shop: { id: 'gid://shopify/Shop/1', metafield: { id: 'gid://shopify/Metafield/1', value: String(count) } } },
+  });
+  const tagsAddOk = { data: { tagsAdd: { node: { id: 'gid://shopify/Customer/7001' }, userErrors: [] } } };
+  const metafieldsSetOk = { data: { metafieldsSet: { metafields: [{ id: 'gid://shopify/Metafield/1' }], userErrors: [] } } };
 
   function signupRequest(body) {
     return new Request('http://example.com/?action=signup', {
@@ -458,19 +435,74 @@ describe('POST /?action=signup', () => {
     });
   }
 
-  it('happy path — calls customers.json and returns success with customer id and email', async () => {
-    mockShopifyCustomer({ id: 7001, email: 'jane@example.com' });
+  it('happy path — creates customer, saves address, adds founding-member tags, returns { success: true }', async () => {
+    mockGqlSequence(customerCreateOk(), addressCreateOk, shopMeta(42), tagsAddOk, metafieldsSetOk);
 
     const res = await call(signupRequest(baseSignup));
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true });
 
-    const data = await res.json();
-    expect(data).toEqual({ success: true, customer: { id: 7001, email: 'jane@example.com' } });
+    // All calls go to graphql.json
+    for (const [url] of globalThis.fetch.mock.calls) {
+      expect(url).toContain('/graphql.json');
+    }
+    expect(globalThis.fetch.mock.calls[0][1].headers['X-Shopify-Access-Token']).toBe('test-token');
+  });
 
-    const [url, opts] = globalThis.fetch.mock.calls[0];
-    expect(url).toContain('/customers.json');
-    expect(opts.method).toBe('POST');
-    expect(opts.headers['X-Shopify-Access-Token']).toBe('test-token');
+  it('adds ["member","founding-member"] tags when count < 100', async () => {
+    mockGqlSequence(customerCreateOk(), addressCreateOk, shopMeta(42), tagsAddOk, metafieldsSetOk);
+
+    await call(signupRequest(baseSignup));
+
+    // tagsAdd is call index 3
+    const [, tagsOpts] = globalThis.fetch.mock.calls[3];
+    const tagsBody = JSON.parse(tagsOpts.body);
+    expect(tagsBody.variables.tags).toEqual(expect.arrayContaining(['member', 'founding-member']));
+
+    // metafieldsSet increments to 43
+    const [, metaOpts] = globalThis.fetch.mock.calls[4];
+    const metaBody = JSON.parse(metaOpts.body);
+    expect(metaBody.variables.metafields[0].value).toBe('43');
+  });
+
+  it('adds only ["member"] tag and skips counter when count >= 100', async () => {
+    mockGqlSequence(customerCreateOk(), addressCreateOk, shopMeta(100), tagsAddOk);
+
+    await call(signupRequest(baseSignup));
+
+    // Only 4 calls: customerCreate + addressCreate + shopMeta + tagsAdd (no metafieldsSet)
+    expect(globalThis.fetch.mock.calls).toHaveLength(4);
+
+    const [, tagsOpts] = globalThis.fetch.mock.calls[3];
+    const tagsBody = JSON.parse(tagsOpts.body);
+    expect(tagsBody.variables.tags).toEqual(['member']);
+  });
+
+  it('duplicate email — looks up existing customer by email and proceeds to tag them', async () => {
+    mockGqlSequence(customerCreateDuplicate, customerLookupOk(), addressCreateOk, shopMeta(42), tagsAddOk, metafieldsSetOk);
+
+    const res = await call(signupRequest(baseSignup));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true });
+
+    // tagsAdd must still be called (call index 4 now due to lookup)
+    const [, tagsOpts] = globalThis.fetch.mock.calls[4];
+    const tagsBody = JSON.parse(tagsOpts.body);
+    expect(tagsBody.variables.id).toBe('gid://shopify/Customer/7001');
+  });
+
+  it('duplicate email — skips tagging when customer already has member tag', async () => {
+    const customerLookupAlreadyMember = {
+      data: { customers: { edges: [{ node: { id: 'gid://shopify/Customer/7001', tags: ['member', 'founding-member'] } }] } },
+    };
+    mockGqlSequence(customerCreateDuplicate, customerLookupAlreadyMember);
+
+    const res = await call(signupRequest(baseSignup));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ success: true });
+
+    // Only 2 calls: customerCreate + customer lookup — no addressCreate or tagsAdd
+    expect(globalThis.fetch.mock.calls).toHaveLength(2);
   });
 
   it('returns 400 validation error when email is missing', async () => {
@@ -503,47 +535,35 @@ describe('POST /?action=signup', () => {
     expect(data.message).toContain('Invalid email');
   });
 
-  it('returns 409 duplicate_email when Shopify returns 422 with errors.email', async () => {
-    globalThis.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ errors: { email: ['has already been taken'] } }), { status: 422 })
-    );
-
-    const res = await call(signupRequest(baseSignup));
-    expect(res.status).toBe(409);
-    const data = await res.json();
-    expect(data.error).toBe('duplicate_email');
-  });
-
-  it('builds note with business name', async () => {
-    mockShopifyCustomer();
+  it('builds note with business name in customerCreate mutation', async () => {
+    mockGqlSequence(customerCreateOk(), addressCreateOk, shopMeta(42), tagsAddOk, metafieldsSetOk);
 
     await call(signupRequest({ ...baseSignup, business_name: 'Joe Cafe' }));
 
     const [, opts] = globalThis.fetch.mock.calls[0];
     const body = JSON.parse(opts.body);
-    expect(body.customer.note).toBe('membership-signup\nBusiness: Joe Cafe');
+    expect(body.variables.input.note).toBe('membership-signup\nBusiness: Joe Cafe');
   });
 
   it('builds note without business name', async () => {
-    mockShopifyCustomer();
+    mockGqlSequence(customerCreateOk(), addressCreateOk, shopMeta(42), tagsAddOk, metafieldsSetOk);
     const { business_name: _bn, ...noBusinessName } = baseSignup;
 
     await call(signupRequest(noBusinessName));
 
     const [, opts] = globalThis.fetch.mock.calls[0];
     const body = JSON.parse(opts.body);
-    expect(body.customer.note).toBe('membership-signup');
+    expect(body.variables.input.note).toBe('membership-signup');
   });
 
-  it('includes address in customer payload', async () => {
-    mockShopifyCustomer();
+  it('saves address via customerAddressCreate mutation', async () => {
+    mockGqlSequence(customerCreateOk(), addressCreateOk, shopMeta(42), tagsAddOk, metafieldsSetOk);
 
     await call(signupRequest(baseSignup));
 
-    const [, opts] = globalThis.fetch.mock.calls[0];
+    const [, opts] = globalThis.fetch.mock.calls[1];
     const body = JSON.parse(opts.body);
-    expect(body.customer.addresses).toHaveLength(1);
-    expect(body.customer.addresses[0]).toMatchObject({
+    expect(body.variables.address).toMatchObject({
       address1: '123 Main St',
       city: 'Los Angeles',
       province: 'CA',
@@ -551,15 +571,15 @@ describe('POST /?action=signup', () => {
     });
   });
 
-  it('defaults country to United States when omitted', async () => {
-    mockShopifyCustomer();
+  it('defaults country to United States in address when omitted', async () => {
+    mockGqlSequence(customerCreateOk(), addressCreateOk, shopMeta(42), tagsAddOk, metafieldsSetOk);
     const { address: { country: _c, ...addressNoCountry }, ...rest } = baseSignup;
 
     await call(signupRequest({ ...rest, address: addressNoCountry }));
 
-    const [, opts] = globalThis.fetch.mock.calls[0];
+    const [, opts] = globalThis.fetch.mock.calls[1];
     const body = JSON.parse(opts.body);
-    expect(body.customer.addresses[0].country).toBe('United States');
+    expect(body.variables.address.country).toBe('United States');
   });
 });
 
@@ -576,82 +596,66 @@ describe('POST /?action=activate-membership', () => {
     });
   }
 
-  // Helper: mock GET then PUT with given existing note
-  function mockGetThenPut(existingNote = null, putStatus = 200) {
-    globalThis.fetch.mockImplementation((url, opts) => {
-      const method = (opts && opts.method) ? opts.method.toUpperCase() : 'GET';
-      if (method === 'GET') {
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({ customer: { id: 5001, note: existingNote } }),
-            { status: 200 }
-          )
-        );
-      }
-      // PUT
-      return Promise.resolve(
-        new Response(
-          JSON.stringify({ customer: { id: 5001, note: 'membership-signup' } }),
-          { status: putStatus }
-        )
+  // Sequences mock responses for ordered GraphQL calls
+  function mockGqlSequence(...responses) {
+    for (const r of responses) {
+      globalThis.fetch.mockResolvedValueOnce(
+        new Response(JSON.stringify(r), { status: 200 })
       );
-    });
+    }
   }
 
-  it('happy path — GETs customer first, then PUTs combined note and returns success', async () => {
-    mockGetThenPut(null); // no existing note
+  const shopMeta = (count) => ({
+    data: { shop: { id: 'gid://shopify/Shop/1', metafield: { id: 'gid://shopify/Metafield/1', value: String(count) } } },
+  });
+  const tagsAddOk = { data: { tagsAdd: { node: { id: 'gid://shopify/Customer/5001' }, userErrors: [] } } };
+  const metafieldsSetOk = { data: { metafieldsSet: { metafields: [{ id: 'gid://shopify/Metafield/1' }], userErrors: [] } } };
+
+  it('adds ["member","founding-member"] tags and increments counter when count < 100', async () => {
+    mockGqlSequence(shopMeta(42), tagsAddOk, metafieldsSetOk);
 
     const res = await call(activateRequest({ customer_id: 5001 }));
     expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data).toEqual({ success: true });
+    expect(await res.json()).toEqual({ success: true });
 
-    // First call must be GET
-    const [getUrl, getOpts] = globalThis.fetch.mock.calls[0];
-    expect(getUrl).toContain('/customers/5001.json');
-    expect((getOpts && getOpts.method) || 'GET').not.toBe('PUT');
+    // Call 1: shop metafield read
+    // Call 2: tagsAdd — must include founding-member
+    const [, tagsAddOpts] = globalThis.fetch.mock.calls[1];
+    const tagsAddBody = JSON.parse(tagsAddOpts.body);
+    expect(tagsAddBody.variables.id).toBe('gid://shopify/Customer/5001');
+    expect(tagsAddBody.variables.tags).toEqual(expect.arrayContaining(['member', 'founding-member']));
 
-    // Second call must be PUT with note = 'membership-signup'
-    const [putUrl, putOpts] = globalThis.fetch.mock.calls[1];
-    expect(putUrl).toContain('/customers/5001.json');
-    expect(putOpts.method).toBe('PUT');
-    const putBody = JSON.parse(putOpts.body);
-    expect(putBody).toEqual({ customer: { id: 5001, note: 'membership-signup' } });
+    // Call 3: metafieldsSet — must increment to 43
+    const [, metaOpts] = globalThis.fetch.mock.calls[2];
+    const metaBody = JSON.parse(metaOpts.body);
+    expect(metaBody.variables.metafields[0].value).toBe('43');
   });
 
-  it('prepends membership-signup to existing note', async () => {
-    mockGetThenPut('Some existing note');
-
-    await call(activateRequest({ customer_id: 5001 }));
-
-    const [, putOpts] = globalThis.fetch.mock.calls[1];
-    const putBody = JSON.parse(putOpts.body);
-    expect(putBody.customer.note).toBe('membership-signup\nSome existing note');
-  });
-
-  it('skips PUT and returns success when note already starts with membership-signup', async () => {
-    mockGetThenPut('membership-signup\nOld note');
+  it('adds only ["member"] tag and skips counter when count >= 100', async () => {
+    mockGqlSequence(shopMeta(100), tagsAddOk);
 
     const res = await call(activateRequest({ customer_id: 5001 }));
     expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data).toEqual({ success: true });
+    expect(await res.json()).toEqual({ success: true });
 
-    // Only the GET call should have been made — no PUT
-    expect(globalThis.fetch.mock.calls).toHaveLength(1);
+    // Only 2 calls: shop meta + tagsAdd — no metafieldsSet
+    expect(globalThis.fetch.mock.calls).toHaveLength(2);
+
+    const [, tagsAddOpts] = globalThis.fetch.mock.calls[1];
+    const tagsAddBody = JSON.parse(tagsAddOpts.body);
+    expect(tagsAddBody.variables.tags).toEqual(['member']);
+    expect(tagsAddBody.variables.tags).not.toContain('founding-member');
   });
 
-  it('accepts customer_id as a string and coerces it to a number', async () => {
-    mockGetThenPut(null);
+  it('accepts customer_id as a string and constructs the correct GID', async () => {
+    mockGqlSequence(shopMeta(42), tagsAddOk, metafieldsSetOk);
 
     const res = await call(activateRequest({ customer_id: '5001' }));
     expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data).toEqual({ success: true });
 
-    // URLs should use the coerced numeric id (no quotes in URL)
-    const [getUrl] = globalThis.fetch.mock.calls[0];
-    expect(getUrl).toContain('/customers/5001.json');
+    const [, tagsAddOpts] = globalThis.fetch.mock.calls[1];
+    const body = JSON.parse(tagsAddOpts.body);
+    expect(body.variables.id).toBe('gid://shopify/Customer/5001');
   });
 
   it('returns 400 with "required" message when customer_id is missing', async () => {
@@ -678,14 +682,29 @@ describe('POST /?action=activate-membership', () => {
     expect(data.message).toBe('customer_id must be a positive integer');
   });
 
-  it('returns 422 shopify_error when Shopify GET returns non-200', async () => {
-    globalThis.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ errors: 'Customer not found' }), { status: 404 })
-    );
-
-    const res = await call(activateRequest({ customer_id: 9999 }));
-    expect(res.status).toBe(422);
+  it('returns 400 with "positive integer" message when customer_id is a non-numeric string', async () => {
+    const res = await call(activateRequest({ customer_id: 'abc' }));
+    expect(res.status).toBe(400);
     const data = await res.json();
-    expect(data.error).toBe('shopify_error');
+    expect(data.error).toBe('validation');
+    expect(data.message).toBe('customer_id must be a positive integer');
+  });
+
+  it('returns 400 with "positive integer" message when customer_id is a float', async () => {
+    const res = await call(activateRequest({ customer_id: 1.5 }));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe('validation');
+    expect(data.message).toBe('customer_id must be a positive integer');
+  });
+
+  it('returns 500 when tagsAdd returns userErrors', async () => {
+    const tagsAddError = { data: { tagsAdd: { node: null, userErrors: [{ field: ['id'], message: 'Invalid customer ID' }] } } };
+    mockGqlSequence(shopMeta(42), tagsAddError);
+
+    const res = await call(activateRequest({ customer_id: 5001 }));
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).toMatch(/Invalid customer ID/);
   });
 });
