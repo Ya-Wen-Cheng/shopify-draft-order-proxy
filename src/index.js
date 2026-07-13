@@ -11,6 +11,77 @@
  */
 
 
+// ── GraphQL helpers ───────────────────────────────────────────────────────────
+
+async function gql(query, variables, gqlUrl, token) {
+  const res = await fetch(gqlUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) throw new Error(`Shopify GQL HTTP ${res.status}`);
+  return res.json();
+}
+
+// Read founding-member counter from shop metafield
+async function readFoundingCount(gqlUrl, token) {
+  const result = await gql(
+    `query { shop { id metafield(namespace: "membership", key: "first_100_free_count") { id value } } }`,
+    {},
+    gqlUrl,
+    token,
+  );
+  const shop = result?.data?.shop;
+  const metafield = shop?.metafield;
+  return {
+    shopId: shop?.id,
+    count: metafield ? parseInt(metafield.value, 10) : 0,
+  };
+}
+
+// Add membership tags and (if founding slot open) increment the counter.
+// NOTE: the read-increment-write is not atomic — two concurrent calls near count=99
+// can both grant founding-member status. "Roughly 100" over-grant is acceptable per spec.
+// First call with no metafield bootstraps it at value "1".
+async function applyMembership(customerGid, gqlUrl, token) {
+  const { shopId, count } = await readFoundingCount(gqlUrl, token);
+  const isFoundingMember = count < 100;
+  const tags = isFoundingMember ? ['member', 'founding-member'] : ['member'];
+
+  const tagsResult = await gql(
+    `mutation tagsAdd($id: ID!, $tags: [String!]!) {
+      tagsAdd(id: $id, tags: $tags) { node { id } userErrors { field message } }
+    }`,
+    { id: customerGid, tags },
+    gqlUrl,
+    token,
+  );
+  const tagsErrors = tagsResult?.data?.tagsAdd?.userErrors ?? [];
+  if (tagsErrors.length > 0) throw new Error(tagsErrors[0].message);
+
+  if (isFoundingMember) {
+    if (!shopId) throw new Error('Could not read shop GID for metafield update');
+    const metaResult = await gql(
+      `mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+        metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message } }
+      }`,
+      {
+        metafields: [{
+          ownerId: shopId,
+          namespace: 'membership',
+          key: 'first_100_free_count',
+          value: String(count + 1),
+          type: 'number_integer',
+        }],
+      },
+      gqlUrl,
+      token,
+    );
+    const metaErrors = metaResult?.data?.metafieldsSet?.userErrors ?? [];
+    if (metaErrors.length > 0) throw new Error(metaErrors[0].message);
+  }
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
@@ -162,50 +233,96 @@ export default {
         return json({ error: 'validation', message: 'Invalid email address' }, 400);
       }
 
-      const customerPayload = {
-        customer: {
-          first_name,
-          last_name,
-          email,
-          phone: phone || '',
-          note: business_name
-            ? `membership-signup\nBusiness: ${business_name}`
-            : 'membership-signup',
-          addresses: [{
-            first_name,
-            last_name,
-            address1: address.address1,
-            address2: address.address2 || '',
-            city: address.city,
-            province: address.province,
-            zip: address.zip,
-            country: address.country || 'United States',
-            phone: phone || '',
-          }],
-        },
-      };
-
       try {
-        const res = await fetch(`${restBase}/customers.json`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Shopify-Access-Token': token,
+        const gqlUrl = `${restBase}/graphql.json`;
+
+        // Step 1: Create customer via GraphQL
+        const createResult = await gql(
+          `mutation customerCreate($input: CustomerInput!) {
+            customerCreate(input: $input) {
+              customer { id }
+              userErrors { field message }
+            }
+          }`,
+          {
+            input: {
+              firstName: first_name,
+              lastName: last_name,
+              email,
+              phone: phone || '',
+              note: business_name
+                ? `membership-signup\nBusiness: ${business_name}`
+                : 'membership-signup',
+            },
           },
-          body: JSON.stringify(customerPayload),
-        });
+          gqlUrl,
+          token,
+        );
 
-        const result = await res.json();
+        let customerGid = createResult?.data?.customerCreate?.customer?.id;
 
-        if (res.status === 422 && result.errors?.email) {
-          return json({ error: 'duplicate_email', message: 'An account with this email already exists.' }, 409);
+        // Step 2: If duplicate email, look up the existing customer
+        const createErrors = createResult?.data?.customerCreate?.userErrors ?? [];
+        if (createErrors.length > 0) {
+          const isDuplicate = createErrors.some(
+            e => e.field?.includes('email') && e.message?.toLowerCase().includes('taken'),
+          );
+          if (!isDuplicate) {
+            return json({ error: 'shopify_error', message: createErrors[0].message }, 422);
+          }
+
+          const lookupResult = await gql(
+            `query customerByEmail($query: String!) {
+              customers(first: 1, query: $query) { edges { node { id tags } } }
+            }`,
+            { query: `email:${email}` },
+            gqlUrl,
+            token,
+          );
+          const existingNode = lookupResult?.data?.customers?.edges?.[0]?.node;
+          if (!existingNode) {
+            return json({ error: 'shopify_error', message: 'Customer not found after duplicate email' }, 422);
+          }
+          customerGid = existingNode.id;
+
+          // Already a member — nothing to do
+          if (existingNode.tags?.includes('member')) {
+            return json({ success: true });
+          }
         }
 
-        if (res.status !== 201) {
-          return json({ error: 'shopify_error', message: JSON.stringify(result.errors) }, 422);
-        }
+        // Step 3: Save delivery address
+        const addrResult = await gql(
+          `mutation customerAddressCreate($customerId: ID!, $address: MailingAddressInput!) {
+            customerAddressCreate(customerId: $customerId, address: $address) {
+              customerAddress { id }
+              userErrors { field message }
+            }
+          }`,
+          {
+            customerId: customerGid,
+            address: {
+              firstName: first_name,
+              lastName: last_name,
+              address1: address.address1,
+              address2: address.address2 || '',
+              city: address.city,
+              province: address.province,
+              zip: address.zip,
+              country: address.country || 'United States',
+              phone: phone || '',
+            },
+          },
+          gqlUrl,
+          token,
+        );
+        const addrErrors = addrResult?.data?.customerAddressCreate?.userErrors ?? [];
+        if (addrErrors.length > 0) throw new Error(addrErrors[0].message);
 
-        return json({ success: true, customer: { id: result.customer.id, email: result.customer.email } });
+        // Steps 4–6: Apply membership tags + increment founding-member counter if slot open
+        await applyMembership(customerGid, gqlUrl, token);
+
+        return json({ success: true });
       } catch (err) {
         return json({ error: err.message }, 500);
       }
@@ -232,46 +349,9 @@ export default {
       }
 
       try {
-        // Step 1: GET current customer note to avoid clobbering it
-        const getRes = await fetch(`${restBase}/customers/${customerId}.json`, {
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Shopify-Access-Token': token,
-          },
-        });
-
-        const getResult = await getRes.json();
-
-        if (getRes.status !== 200) {
-          return json({ error: 'shopify_error', message: JSON.stringify(getResult.errors) }, 422);
-        }
-
-        const existingNote = getResult.customer.note || '';
-
-        // Step 2: Idempotency check — skip PUT if already marked
-        if (existingNote.startsWith('membership-signup')) {
-          return json({ success: true });
-        }
-
-        // Step 3: Prepend marker to existing note
-        const newNote = existingNote ? `membership-signup\n${existingNote}` : 'membership-signup';
-
-        // Step 4: PUT the combined note
-        const putRes = await fetch(`${restBase}/customers/${customerId}.json`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Shopify-Access-Token': token,
-          },
-          body: JSON.stringify({ customer: { id: customerId, note: newNote } }),
-        });
-
-        const putResult = await putRes.json();
-
-        if (putRes.status !== 200) {
-          return json({ error: 'shopify_error', message: JSON.stringify(putResult.errors) }, 422);
-        }
-
+        const customerGid = `gid://shopify/Customer/${customerId}`;
+        const gqlUrl = `${restBase}/graphql.json`;
+        await applyMembership(customerGid, gqlUrl, token);
         return json({ success: true });
       } catch (err) {
         return json({ error: err.message }, 500);
@@ -324,7 +404,7 @@ export default {
             });
           })(),
           email: cart.email,
-          customer: { id: cart.customerId },
+          ...(cart.customerId && { customer: { id: Number(cart.customerId) } }),
           shipping_address: {
             first_name: addr.first_name || '',
             last_name:  addr.last_name  || '',
