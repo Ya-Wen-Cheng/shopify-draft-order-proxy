@@ -250,6 +250,7 @@ export default {
               lastName: last_name,
               email,
               phone: phone || '',
+              taxExempt: true,
               note: business_name
                 ? `membership-signup\nBusiness: ${business_name}`
                 : 'membership-signup',
@@ -452,20 +453,6 @@ export default {
         });
 
         const result = await res.json();
-
-        // Send draft order invoice via Shopify (non-blocking)
-        if (res.status === 201 && result.draft_order) {
-          ctx.waitUntil(
-            fetch(`${restBase}/draft_orders/${result.draft_order.id}/send_invoice.json`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-Shopify-Access-Token': token,
-              },
-              body: JSON.stringify({ draft_order_invoice: {} }),
-            }).catch(err => console.error('[Invoice] Failed to send:', err))
-          );
-        }
 
         return json(result, res.status);
       } catch (err) {
