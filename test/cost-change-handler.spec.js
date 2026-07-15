@@ -47,6 +47,7 @@ function readResponse({
   lastKnownCost = {},
   costChangeLog = '',
   costChangeSource = '',
+  costChangeSourceId = null,
 } = {}) {
   return new Response(
     JSON.stringify({
@@ -61,12 +62,21 @@ function readResponse({
               variantsCount: { count: variantsCount },
               lastKnownCost: { value: JSON.stringify(lastKnownCost) },
               costChangeLog: { value: costChangeLog },
-              costChangeSource: { value: costChangeSource },
+              costChangeSource: costChangeSource
+                ? { id: costChangeSourceId || 'gid://shopify/Metafield/999', value: costChangeSource }
+                : null,
             },
           },
         },
       },
     }),
+    { status: 200 }
+  );
+}
+
+function deleteResponse() {
+  return new Response(
+    JSON.stringify({ data: { metafieldDelete: { deletedId: 'gid://shopify/Metafield/999', userErrors: [] } } }),
     { status: 200 }
   );
 }
@@ -156,22 +166,31 @@ describe('CostChangeHandler', () => {
     expect(log).toMatch(/^\d{4}-\d{2}-\d{2} \| 32 oz \| \$4\.28 → \$4\.59 \| manual$/);
   });
 
-  it('uses cost_change_source when present and clears it after logging', async () => {
-    mockReadThenWrite({
-      variantsCount: 2,
-      lastKnownCost: { '456': '4.28' },
-      costChangeSource: 'order:#D1',
+  it('uses cost_change_source when present and deletes it after logging', async () => {
+    let call = 0;
+    globalThis.fetch.mockImplementation(() => {
+      call += 1;
+      if (call === 1) return Promise.resolve(readResponse({ variantsCount: 2, lastKnownCost: { '456': '4.28' }, costChangeSource: 'order:#D1' }));
+      if (call === 2) return Promise.resolve(writeResponse());
+      return Promise.resolve(deleteResponse());
     });
 
     const res = await sendWebhook({ id: 123, cost: '4.59' });
 
     expect(res.status).toBe(200);
-    const body = getWriteMutationBody();
-    const log = body.variables.metafields.find(m => m.key === 'cost_change_log').value;
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3); // read + write + delete
+
+    // log contains the source
+    const writeBody = JSON.parse(globalThis.fetch.mock.calls[1][1].body);
+    const log = writeBody.variables.metafields.find(m => m.key === 'cost_change_log').value;
     expect(log).toContain('order:#D1');
 
-    const sourceField = body.variables.metafields.find(m => m.key === 'cost_change_source');
-    expect(sourceField.value).toBe('');
+    // write batch does NOT include cost_change_source
+    expect(writeBody.variables.metafields.find(m => m.key === 'cost_change_source')).toBeUndefined();
+
+    // third call is the delete mutation
+    const deleteBody = JSON.parse(globalThis.fetch.mock.calls[2][1].body);
+    expect(deleteBody.variables.id).toBe('gid://shopify/Metafield/999');
   });
 
   it('prepends new log entries, keeping newest first', async () => {
