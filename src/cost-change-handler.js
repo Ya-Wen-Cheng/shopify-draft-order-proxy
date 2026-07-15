@@ -24,7 +24,7 @@ const READ_QUERY = `
           variantsCount { count }
           lastKnownCost: metafield(namespace: "custom", key: "last_known_cost") { value }
           costChangeLog: metafield(namespace: "custom", key: "cost_change_log") { value }
-          costChangeSource: metafield(namespace: "custom", key: "cost_change_source") { value }
+          costChangeSource: metafield(namespace: "custom", key: "cost_change_source") { id value }
         }
       }
     }
@@ -35,6 +35,15 @@ const WRITE_MUTATION = `
   mutation CostChangeWrite($metafields: [MetafieldsSetInput!]!) {
     metafieldsSet(metafields: $metafields) {
       metafields { id key }
+      userErrors { field message }
+    }
+  }
+`;
+
+const DELETE_SOURCE_MUTATION = `
+  mutation CostChangeSourceDelete($id: ID!) {
+    metafieldDelete(input: { id: $id }) {
+      deletedId
       userErrors { field message }
     }
   }
@@ -125,7 +134,8 @@ export class CostChangeHandler {
 
       const lastKnownCost = product.lastKnownCost?.value ? JSON.parse(product.lastKnownCost.value) : {};
       const costChangeLog = product.costChangeLog?.value || '';
-      const costChangeSource = product.costChangeSource?.value || '';
+      const costChangeSourceId    = product.costChangeSource?.id || null;
+      const costChangeSource     = product.costChangeSource?.value || '';
 
       const priorCost = lastKnownCost[variantId];
 
@@ -178,15 +188,13 @@ export class CostChangeHandler {
             type: 'multi_line_text_field',
             value: newLog,
           },
-          {
-            ownerId: product.id,
-            namespace: 'custom',
-            key: 'cost_change_source',
-            type: 'single_line_text_field',
-            value: '',
-          },
         ],
       });
+
+      // Clear cost_change_source after use (delete rather than blank to satisfy Shopify validation)
+      if (costChangeSourceId) {
+        await this.graphqlRequest(DELETE_SOURCE_MUTATION, { id: costChangeSourceId });
+      }
 
       return new Response(JSON.stringify({ ok: true, logged: true }), { status: 200 });
     } catch (err) {
