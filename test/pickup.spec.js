@@ -38,10 +38,11 @@ describe('GET /pickup/data', () => {
     draft_orders: [
       {
         id: 1, name: '#D1', tags: 'draft-order-tab, priced',
+        created_at: '2026-07-15T17:30:00Z',
         shipping_address: { first_name: 'Mei', last_name: 'Chen' },
         line_items: [
-          { id: 101, title: 'Roma Tomatoes', variant_title: null, quantity: 3, price: '2.50', sku: 'TOM-1', product_id: 501 },
-          { id: 102, title: 'Bagged Rice', variant_title: '25lb', quantity: 1, price: '18.00', sku: 'RICE-1', product_id: 502 },
+          { id: 101, title: 'Roma Tomatoes', variant_title: null, quantity: 3, price: '2.50', sku: 'TOM-1', product_id: 501, variant_id: 1001 },
+          { id: 102, title: 'Bagged Rice', variant_title: '25lb', quantity: 1, price: '18.00', sku: 'RICE-1', product_id: 502, variant_id: 1002 },
         ],
       },
       {
@@ -58,8 +59,36 @@ describe('GET /pickup/data', () => {
         return Promise.resolve(new Response(JSON.stringify({
           data: {
             nodes: [
-              { id: 'gid://shopify/Product/501', tags: ['weight', 'produce'] },
-              { id: 'gid://shopify/Product/502', tags: ['grocery'] },
+              {
+                id: 'gid://shopify/Product/501',
+                tags: ['weight', 'produce'],
+                variants: {
+                  edges: [{
+                    node: {
+                      id: 'gid://shopify/ProductVariant/1001',
+                      inventoryItem: {
+                        id: 'gid://shopify/InventoryItem/2001',
+                        unitCost: { amount: '1.25' },
+                      },
+                    },
+                  }],
+                },
+              },
+              {
+                id: 'gid://shopify/Product/502',
+                tags: ['grocery'],
+                variants: {
+                  edges: [{
+                    node: {
+                      id: 'gid://shopify/ProductVariant/1002',
+                      inventoryItem: {
+                        id: 'gid://shopify/InventoryItem/2002',
+                        unitCost: { amount: '15.00' },
+                      },
+                    },
+                  }],
+                },
+              },
             ],
           },
         }), { status: 200 }));
@@ -96,6 +125,21 @@ describe('GET /pickup/data', () => {
     globalThis.fetch.mockResolvedValue(new Response(JSON.stringify({ errors: 'boom' }), { status: 500 }));
     const res = await call(new Request('http://example.com/pickup/data'));
     expect(res.status).toBe(500);
+  });
+
+  it('enriches line items with cost, inventory_item_id, variant_id, product_id and order with created_at', async () => {
+    mockFetch();
+    const res = await call(new Request('http://example.com/pickup/data'));
+    const data = await res.json();
+    const order = data.draft_orders[0];
+    expect(order.created_at).toBe('2026-07-15T17:30:00Z');
+    const item101 = order.line_items.find(i => i.id === 101);
+    expect(item101.cost).toBe('1.25');
+    expect(item101.inventory_item_id).toBe('gid://shopify/InventoryItem/2001');
+    expect(item101.variant_id).toBe(1001);
+    expect(item101.product_id).toBe(501);
+    const item102 = order.line_items.find(i => i.id === 102);
+    expect(item102.cost).toBe('15.00');
   });
 });
 
@@ -233,6 +277,282 @@ describe('PUT /pickup/complete', () => {
   it('returns 400 when draft_order_id missing', async () => {
     const res = await call(put('/pickup/complete', {}));
     expect(res.status).toBe(400);
+  });
+});
+
+// ── PUT /pickup/complete — batched changes ────────────────────────────────────
+
+describe('PUT /pickup/complete — batched changes', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
+
+  const currentDraftOrder = {
+    draft_order: {
+      id: 1,
+      line_items: [
+        { id: 101, title: 'Roma Tomatoes', quantity: 1, price: '5.00', properties: [] },
+        { id: 102, title: 'Chicken Breast', quantity: 2, price: '12.00', properties: [] },
+      ],
+    },
+  };
+
+  function mockFetch() {
+    globalThis.fetch.mockImplementation(async (url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+
+      if (url.includes('/graphql.json') && body.query?.includes('metafieldsSet')) {
+        return new Response(JSON.stringify({ data: { metafieldsSet: { metafields: [{ id: 'mf1', key: 'cost_change_source' }], userErrors: [] } } }), { status: 200 });
+      }
+      if (url.includes('/graphql.json')) {
+        return new Response(JSON.stringify({ data: { draftOrder: { order: { id: 'gid://shopify/Order/9001', legacyResourceId: '9001' } } } }), { status: 200 });
+      }
+      if (url.includes('/inventory_items/') && opts?.method === 'PUT') {
+        return new Response(JSON.stringify({ inventory_item: { id: 2001, cost: '3.50' } }), { status: 200 });
+      }
+      if (url.includes('/draft_orders/1.json') && opts?.method === 'PUT') {
+        return new Response(JSON.stringify({ draft_order: { id: 1 } }), { status: 200 });
+      }
+      if (url.includes('/draft_orders/1.json')) {
+        return new Response(JSON.stringify(currentDraftOrder), { status: 200 });
+      }
+      if (url.includes('/complete.json')) {
+        return new Response(JSON.stringify({ draft_order: { id: 1 } }), { status: 200 });
+      }
+      if (url.includes('/orders/9001.json') && opts?.method === 'PUT') {
+        return new Response(JSON.stringify({ order: { id: 9001, tags: 'sourced' } }), { status: 200 });
+      }
+      if (url.includes('/orders/9001.json')) {
+        return new Response(JSON.stringify({ order: { id: 9001, tags: '' } }), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+  }
+
+  it('processes cost_price change: sets metafield, updates inventory item, merges price, completes draft', async () => {
+    mockFetch();
+    const res = await call(put('/pickup/complete', {
+      draft_order_id: 1,
+      changes: [{
+        type: 'cost_price',
+        line_item_id: 101,
+        title: 'Roma Tomatoes',
+        cost: '3.50',
+        price: '6.00',
+        product_id: 501,
+        inventory_item_id: 'gid://shopify/InventoryItem/2001',
+        current_cost: '1.25',
+        current_price: '5.00',
+      }],
+    }));
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(true);
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].success).toBe(true);
+    expect(data.order_id).toBe('9001');
+
+    // metafield was set
+    const metafieldCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/graphql.json') && JSON.parse(o.body).query?.includes('metafieldsSet')
+    );
+    expect(metafieldCall).toBeDefined();
+    const mfBody = JSON.parse(metafieldCall[1].body);
+    expect(mfBody.variables.metafields[0].value).toBe('pickup');
+    expect(mfBody.variables.metafields[0].key).toBe('cost_change_source');
+
+    // inventory item was updated
+    const inventoryCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/inventory_items/') && o?.method === 'PUT'
+    );
+    expect(inventoryCall).toBeDefined();
+    const invBody = JSON.parse(inventoryCall[1].body);
+    expect(invBody.inventory_item.cost).toBe('3.50');
+
+    // price was merged into draft order line items
+    const draftPutCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/draft_orders/1.json') && o?.method === 'PUT'
+    );
+    expect(draftPutCall).toBeDefined();
+    const draftBody = JSON.parse(draftPutCall[1].body);
+    const li = draftBody.draft_order.line_items.find(i => i.id === 101);
+    expect(li.price).toBe('6.00');
+  });
+
+  it('cost-only change: sets metafield and inventory item, skips line item merge', async () => {
+    mockFetch();
+    const res = await call(put('/pickup/complete', {
+      draft_order_id: 1,
+      changes: [{
+        type: 'cost_price',
+        line_item_id: 101,
+        title: 'Roma Tomatoes',
+        cost: '3.50',
+        price: null,
+        product_id: 501,
+        inventory_item_id: 'gid://shopify/InventoryItem/2001',
+        current_cost: '1.25',
+        current_price: '5.00',
+      }],
+    }));
+
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(true);
+
+    // inventory item updated
+    const inventoryCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/inventory_items/') && o?.method === 'PUT'
+    );
+    expect(inventoryCall).toBeDefined();
+
+    // no draft order PUT (no line item changes)
+    const draftPutCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/draft_orders/1.json') && o?.method === 'PUT'
+    );
+    expect(draftPutCall).toBeUndefined();
+  });
+
+  it('price-only change: skips metafield and inventory, merges price into draft order', async () => {
+    mockFetch();
+    const res = await call(put('/pickup/complete', {
+      draft_order_id: 1,
+      changes: [{
+        type: 'cost_price',
+        line_item_id: 101,
+        title: 'Roma Tomatoes',
+        cost: null,
+        price: '6.00',
+        product_id: 501,
+        inventory_item_id: 'gid://shopify/InventoryItem/2001',
+        current_cost: '1.25',
+        current_price: '5.00',
+      }],
+    }));
+
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(true);
+
+    // no metafield call
+    const metafieldCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/graphql.json') && JSON.parse(o?.body || '{}').query?.includes('metafieldsSet')
+    );
+    expect(metafieldCall).toBeUndefined();
+
+    // no inventory item call
+    const inventoryCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/inventory_items/') && o?.method === 'PUT'
+    );
+    expect(inventoryCall).toBeUndefined();
+
+    // price merged
+    const draftPutCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/draft_orders/1.json') && o?.method === 'PUT'
+    );
+    expect(draftPutCall).toBeDefined();
+    const li = JSON.parse(draftPutCall[1].body).draft_order.line_items.find(i => i.id === 101);
+    expect(li.price).toBe('6.00');
+  });
+
+  it('partial failure: returns all_succeeded false and does not complete the draft order', async () => {
+    globalThis.fetch.mockImplementation(async (url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      // metafieldsSet fails with userErrors
+      if (url.includes('/graphql.json') && body.query?.includes('metafieldsSet')) {
+        return new Response(JSON.stringify({ data: { metafieldsSet: { metafields: [], userErrors: [{ field: 'ownerId', message: 'not found' }] } } }), { status: 200 });
+      }
+      // inventory item update FAILS for item 101
+      if (url.includes('/inventory_items/') && opts?.method === 'PUT') {
+        return new Response(JSON.stringify({ errors: 'Not Found' }), { status: 404 });
+      }
+      if (url.includes('/draft_orders/1.json')) {
+        return new Response(JSON.stringify(currentDraftOrder), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+
+    const res = await call(put('/pickup/complete', {
+      draft_order_id: 1,
+      changes: [{
+        type: 'cost_price',
+        line_item_id: 101,
+        title: 'Roma Tomatoes',
+        cost: '3.50',
+        price: null,
+        product_id: 501,
+        inventory_item_id: 'gid://shopify/InventoryItem/2001',
+        current_cost: '1.25',
+        current_price: '5.00',
+      }],
+    }));
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(false);
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].success).toBe(false);
+
+    // draft order was NOT completed
+    const completeCall = globalThis.fetch.mock.calls.find(([u]) => u.includes('/complete.json'));
+    expect(completeCall).toBeUndefined();
+  });
+
+  it('no-change detection: skips API calls when cost and price match current values', async () => {
+    mockFetch();
+    const res = await call(put('/pickup/complete', {
+      draft_order_id: 1,
+      changes: [{
+        type: 'cost_price',
+        line_item_id: 101,
+        title: 'Roma Tomatoes',
+        cost: '1.25',          // same as current_cost
+        price: '5.00',         // same as current_price
+        product_id: 501,
+        inventory_item_id: 'gid://shopify/InventoryItem/2001',
+        current_cost: '1.25',
+        current_price: '5.00',
+      }],
+    }));
+
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(true);
+
+    // no metafield or inventory calls
+    const metafieldCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/graphql.json') && JSON.parse(o?.body || '{}').query?.includes('metafieldsSet')
+    );
+    expect(metafieldCall).toBeUndefined();
+
+    const inventoryCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/inventory_items/') && o?.method === 'PUT'
+    );
+    expect(inventoryCall).toBeUndefined();
+
+    // draft order completed (no changes = proceed to complete)
+    const completeCall = globalThis.fetch.mock.calls.find(([u]) => u.includes('/complete.json'));
+    expect(completeCall).toBeDefined();
+  });
+
+  it('missing inventory_item_id: returns failure result without crashing', async () => {
+    mockFetch();
+    const res = await call(put('/pickup/complete', {
+      draft_order_id: 1,
+      changes: [{
+        type: 'cost_price',
+        line_item_id: 101,
+        title: 'Roma Tomatoes',
+        cost: '3.50',
+        price: null,
+        product_id: 501,
+        inventory_item_id: null,   // missing
+        current_cost: '1.25',
+        current_price: '5.00',
+      }],
+    }));
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(false);
+    expect(data.results[0].success).toBe(false);
+    expect(data.results[0].error).toContain('missing inventory_item_id');
   });
 });
 
