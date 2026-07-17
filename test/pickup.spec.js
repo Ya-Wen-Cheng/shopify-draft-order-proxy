@@ -349,6 +349,8 @@ describe('PUT /pickup/complete — batched changes', () => {
     expect(data.all_succeeded).toBe(true);
     expect(data.results).toHaveLength(1);
     expect(data.results[0].success).toBe(true);
+    expect(data.results[0].line_item_id).toBe(101);
+    expect(data.results[0].title).toBe('Roma Tomatoes');
     expect(data.order_id).toBe('9001');
 
     // metafield was set
@@ -404,6 +406,11 @@ describe('PUT /pickup/complete — batched changes', () => {
     );
     expect(inventoryCall).toBeDefined();
 
+    const metafieldCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/graphql.json') && JSON.parse(o?.body || '{}').query?.includes('metafieldsSet')
+    );
+    expect(metafieldCall).toBeDefined();
+
     // no draft order PUT (no line item changes)
     const draftPutCall = globalThis.fetch.mock.calls.find(([u, o]) =>
       u.includes('/draft_orders/1.json') && o?.method === 'PUT'
@@ -452,14 +459,40 @@ describe('PUT /pickup/complete — batched changes', () => {
     expect(li.price).toBe('6.00');
   });
 
-  it('partial failure: returns all_succeeded false and does not complete the draft order', async () => {
+  it('partial failure: metafield userErrors marks result failed, draft not completed', async () => {
     globalThis.fetch.mockImplementation(async (url, opts) => {
       const body = opts?.body ? JSON.parse(opts.body) : {};
-      // metafieldsSet fails with userErrors
       if (url.includes('/graphql.json') && body.query?.includes('metafieldsSet')) {
         return new Response(JSON.stringify({ data: { metafieldsSet: { metafields: [], userErrors: [{ field: 'ownerId', message: 'not found' }] } } }), { status: 200 });
       }
-      // inventory item update FAILS for item 101
+      if (url.includes('/draft_orders/1.json')) {
+        return new Response(JSON.stringify(currentDraftOrder), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    const res = await call(put('/pickup/complete', {
+      draft_order_id: 1,
+      changes: [{
+        type: 'cost_price', line_item_id: 101, title: 'Roma Tomatoes',
+        cost: '3.50', price: null, product_id: 501,
+        inventory_item_id: 'gid://shopify/InventoryItem/2001',
+        current_cost: '1.25', current_price: '5.00',
+      }],
+    }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(false);
+    expect(data.results[0].success).toBe(false);
+    const completeCall = globalThis.fetch.mock.calls.find(([u]) => u.includes('/complete.json'));
+    expect(completeCall).toBeUndefined();
+  });
+
+  it('partial failure: inventory item 4xx marks result failed, draft not completed', async () => {
+    globalThis.fetch.mockImplementation(async (url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      if (url.includes('/graphql.json') && body.query?.includes('metafieldsSet')) {
+        return new Response(JSON.stringify({ data: { metafieldsSet: { metafields: [{ id: 'mf1', key: 'cost_change_source' }], userErrors: [] } } }), { status: 200 });
+      }
       if (url.includes('/inventory_items/') && opts?.method === 'PUT') {
         return new Response(JSON.stringify({ errors: 'Not Found' }), { status: 404 });
       }
@@ -468,29 +501,19 @@ describe('PUT /pickup/complete — batched changes', () => {
       }
       return new Response('{}', { status: 200 });
     });
-
     const res = await call(put('/pickup/complete', {
       draft_order_id: 1,
       changes: [{
-        type: 'cost_price',
-        line_item_id: 101,
-        title: 'Roma Tomatoes',
-        cost: '3.50',
-        price: null,
-        product_id: 501,
+        type: 'cost_price', line_item_id: 101, title: 'Roma Tomatoes',
+        cost: '3.50', price: null, product_id: 501,
         inventory_item_id: 'gid://shopify/InventoryItem/2001',
-        current_cost: '1.25',
-        current_price: '5.00',
+        current_cost: '1.25', current_price: '5.00',
       }],
     }));
-
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.all_succeeded).toBe(false);
-    expect(data.results).toHaveLength(1);
     expect(data.results[0].success).toBe(false);
-
-    // draft order was NOT completed
     const completeCall = globalThis.fetch.mock.calls.find(([u]) => u.includes('/complete.json'));
     expect(completeCall).toBeUndefined();
   });
@@ -553,6 +576,54 @@ describe('PUT /pickup/complete — batched changes', () => {
     expect(data.all_succeeded).toBe(false);
     expect(data.results[0].success).toBe(false);
     expect(data.results[0].error).toContain('missing inventory_item_id');
+  });
+
+  it('two-item batch: one succeeds one fails — both result entries present, draft not completed', async () => {
+    globalThis.fetch.mockImplementation(async (url, opts) => {
+      const body = opts?.body ? JSON.parse(opts.body) : {};
+      if (url.includes('/graphql.json') && body.query?.includes('metafieldsSet')) {
+        // metafield for product 501 succeeds, product 502 fails
+        const ownerId = body.variables?.metafields?.[0]?.ownerId || '';
+        if (ownerId.includes('502')) {
+          return new Response(JSON.stringify({ data: { metafieldsSet: { metafields: [], userErrors: [{ field: 'ownerId', message: 'not found' }] } } }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ data: { metafieldsSet: { metafields: [{ id: 'mf1', key: 'cost_change_source' }], userErrors: [] } } }), { status: 200 });
+      }
+      if (url.includes('/inventory_items/') && opts?.method === 'PUT') {
+        return new Response(JSON.stringify({ inventory_item: { id: 2001, cost: '3.50' } }), { status: 200 });
+      }
+      if (url.includes('/draft_orders/1.json')) {
+        return new Response(JSON.stringify(currentDraftOrder), { status: 200 });
+      }
+      return new Response('{}', { status: 200 });
+    });
+    const res = await call(put('/pickup/complete', {
+      draft_order_id: 1,
+      changes: [
+        {
+          type: 'cost_price', line_item_id: 101, title: 'Roma Tomatoes',
+          cost: '3.50', price: null, product_id: 501,
+          inventory_item_id: 'gid://shopify/InventoryItem/2001',
+          current_cost: '1.25', current_price: '5.00',
+        },
+        {
+          type: 'cost_price', line_item_id: 102, title: 'Chicken Breast',
+          cost: '8.00', price: null, product_id: 502,
+          inventory_item_id: 'gid://shopify/InventoryItem/2002',
+          current_cost: '6.00', current_price: '12.00',
+        },
+      ],
+    }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(false);
+    expect(data.results).toHaveLength(2);
+    const r101 = data.results.find(r => r.line_item_id === 101);
+    const r102 = data.results.find(r => r.line_item_id === 102);
+    expect(r101.success).toBe(true);
+    expect(r102.success).toBe(false);
+    const completeCall = globalThis.fetch.mock.calls.find(([u]) => u.includes('/complete.json'));
+    expect(completeCall).toBeUndefined();
   });
 });
 
