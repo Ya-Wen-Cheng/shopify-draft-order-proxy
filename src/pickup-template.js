@@ -45,7 +45,7 @@ export function renderPickupPage() {
   .order-summary div { margin-top: 4px; }
   .progress { padding: 12px; background: #fffbeb; border-radius: 6px; margin-top: 8px; font-size: 14px; }
   .result-success { color: #16a34a; margin-top: 8px; font-weight: 600; }
-  .result-mixed { color: #16a34a; margin-top: 8px; font-weight: 600; }
+  .result-mixed { color: #d97706; margin-top: 8px; font-weight: 600; }
   .result-failed { color: #dc2626; margin-top: 4px; font-weight: 600; }
   .result-contact { color: #dc2626; font-size: 13px; margin-top: 4px; }
 </style>
@@ -136,6 +136,8 @@ function getItemState(orderId, li) {
 
 function allResolved(orderId) {
   var items = state[orderId].items;
+  var ids = Object.keys(items);
+  if (ids.length === 0) return false;
   for (var id in items) {
     if (!items[id].resolved) return false;
   }
@@ -156,7 +158,6 @@ async function loadData() {
         completing: false,
         realOrderId: null,
         results: [],
-        progress: null,
         order: order,
       };
     } else {
@@ -220,14 +221,16 @@ async function completeOrder(order) {
     var li = order.line_items.find(function (l) { return String(l.id) === String(id); });
     if (!li) continue;
 
-    // cost/price changes
-    if (item.costPriceConfirmed && (item.newCost !== null || item.newPrice !== null)) {
+    // cost/price changes — only push if at least one value actually differs from stored originals
+    var costActuallyChanged = item.newCost !== null && String(item.newCost) !== String(item.currentCost);
+    var priceActuallyChanged = item.newPrice !== null && String(item.newPrice) !== String(item.currentPrice);
+    if (item.costPriceConfirmed && (costActuallyChanged || priceActuallyChanged)) {
       changes.push({
         line_item_id: Number(id),
         title: li.title,
         type: 'cost_price',
-        cost: item.newCost,
-        price: item.newPrice,
+        cost: costActuallyChanged ? String(item.newCost) : null,
+        price: priceActuallyChanged ? String(item.newPrice) : null,
         product_id: item.productId,
         inventory_item_id: item.inventoryItemId,
         current_cost: item.currentCost,
@@ -251,7 +254,6 @@ async function completeOrder(order) {
 
   // show progress while request is in flight
   state[order.id].completing = true;
-  state[order.id].progress = { current: 0, total: changes.length };
   rerender();
 
   try {
@@ -493,22 +495,14 @@ function render(orders) {
       });
       btnRow.appendChild(cpBtn);
 
-      // "Update Weight" toggle button (weight items only, and only if not yet resolved as weight)
-      if (itemState.hasWeight && !itemState.resolved) {
-        var wBtn = el('button', 'btn btn-update-w', 'Update Weight');
+      // "Update Weight" toggle button (weight items only); label changes after resolution
+      if (itemState.hasWeight) {
+        var wBtn = el('button', 'btn btn-update-w', itemState.resolved ? 'Re-enter Weight' : 'Update Weight');
         wBtn.addEventListener('click', function () {
           itemState.weightExpanded = !itemState.weightExpanded;
           rerender();
         });
         btnRow.appendChild(wBtn);
-      } else if (itemState.hasWeight && itemState.resolved) {
-        // keep button visible so user can re-expand if needed
-        var wBtnDone = el('button', 'btn btn-update-w', 'Update Weight');
-        wBtnDone.addEventListener('click', function () {
-          itemState.weightExpanded = !itemState.weightExpanded;
-          rerender();
-        });
-        btnRow.appendChild(wBtnDone);
       }
 
       row.appendChild(btnRow);
@@ -521,9 +515,11 @@ function render(orders) {
           foundBtn.addEventListener('click', function () { markResolved(order.id, li, itemState, 'found'); });
           var partialBtn = el('button', 'btn btn-partial', 'Partial');
           partialBtn.addEventListener('click', function () {
-            var qty = prompt('Quantity found:', li.quantity);
-            if (qty === null) return;
-            markResolved(order.id, li, itemState, 'partial', Number(qty));
+            var raw = prompt('Quantity found:', li.quantity);
+            if (raw === null) return;
+            var qty = parseInt(raw, 10);
+            if (isNaN(qty) || qty < 1 || qty >= li.quantity) return;
+            markResolved(order.id, li, itemState, 'partial', qty);
           });
           var removeBtn = el('button', 'btn btn-remove', 'Removed');
           removeBtn.addEventListener('click', function () { markResolved(order.id, li, itemState, 'remove'); });
