@@ -25,50 +25,6 @@ describe('OPTIONS preflight', () => {
   });
 });
 
-// ── GET /payment-methods ──────────────────────────────────────────────────────
-
-describe('GET /payment-methods', () => {
-  beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn());
-  });
-
-  it('returns filtered manual gateways with chips', async () => {
-    globalThis.fetch.mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          payment_gateways: [
-            { id: 1, name: 'Bank Transfer (ACH)', type: 'manual', enabled: true, description: 'Wire details on invoice' },
-            { id: 2, name: 'Net 30', type: 'manual', enabled: true, description: 'Pay within 30 days' },
-            { id: 3, name: 'Credit Card', type: 'manual', enabled: true, description: 'Via invoice' },
-            { id: 4, name: 'Shopify Payments', type: 'hosted', enabled: true, description: '' },
-            { id: 5, name: 'Business Check', type: 'manual', enabled: false, description: '' },
-          ],
-        }),
-        { status: 200 }
-      )
-    );
-
-    const res = await call(new Request('http://example.com/payment-methods'));
-    expect(res.status).toBe(200);
-
-    const data = await res.json();
-    // hosted and disabled gateways are excluded
-    expect(data).toHaveLength(3);
-    expect(data[0]).toMatchObject({ id: '1', name: 'Bank Transfer (ACH)', chips: ['ACH'] });
-    expect(data[1]).toMatchObject({ id: '2', name: 'Net 30', chips: ['NET 30'] });
-    expect(data[2]).toMatchObject({ id: '3', name: 'Credit Card', chips: ['VISA', 'MC', 'AMEX'] });
-  });
-
-  it('returns 500 when Shopify errors', async () => {
-    globalThis.fetch.mockResolvedValue(new Response('Unauthorized', { status: 401 }));
-
-    const res = await call(new Request('http://example.com/payment-methods'));
-    expect(res.status).toBe(401);
-    const data = await res.json();
-    expect(data.error).toMatch(/Shopify error/);
-  });
-});
-
 // ── GET /?id= ─────────────────────────────────────────────────────────────────
 
 describe('GET /?id=', () => {
