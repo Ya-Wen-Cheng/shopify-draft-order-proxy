@@ -200,7 +200,7 @@ function markResolved(orderId, li, itemState, type, quantity) {
 function confirmCostPrice(orderId, li, itemState, newCost, newPrice) {
   itemState.newCost = (newCost !== '' && newCost !== null && !isNaN(parseFloat(newCost))) ? parseFloat(newCost) : null;
   itemState.newPrice = (newPrice !== '' && newPrice !== null && !isNaN(parseFloat(newPrice))) ? parseFloat(newPrice) : null;
-  itemState.costPriceConfirmed = true;
+  itemState.costPriceConfirmed = itemState.newCost !== null || itemState.newPrice !== null;
   itemState.costPriceExpanded = false;
   rerender();
 }
@@ -222,8 +222,8 @@ async function completeOrder(order) {
     if (!li) continue;
 
     // cost/price changes — only push if at least one value actually differs from stored originals
-    var costActuallyChanged = item.newCost !== null && String(item.newCost) !== String(item.currentCost);
-    var priceActuallyChanged = item.newPrice !== null && String(item.newPrice) !== String(item.currentPrice);
+    var costActuallyChanged = item.newCost !== null && parseFloat(item.newCost) !== parseFloat(item.currentCost);
+    var priceActuallyChanged = item.newPrice !== null && parseFloat(item.newPrice) !== parseFloat(item.currentPrice);
     if (item.costPriceConfirmed && (costActuallyChanged || priceActuallyChanged)) {
       changes.push({
         line_item_id: Number(id),
@@ -549,8 +549,8 @@ function render(orders) {
     // ── complete / progress / results ──
     if (orderState.completing) {
       card.appendChild(el('div', 'progress', '⏳ Updating… please wait'));
-    } else if (orderState.completed !== false && orderState.results.length > 0) {
-      var allOk = orderState.results.every(function (r) { return r.success; });
+    } else if (orderState.completed) {
+      var allOk = !orderState.results.some(function (r) { return !r.success; });
       if (allOk) {
         card.appendChild(el('div', 'result-success', '✅ All ' + orderState.results.length + ' items updated successfully.'));
         var printBtn = el('button', 'btn-print', 'Print Invoice');

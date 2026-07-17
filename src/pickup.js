@@ -184,8 +184,8 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
   // ── Step 1: Separate cost/price changes, detect what actually changed ──────
   const costPriceChanges = changes.filter(c => c.type === 'cost_price').map(c => ({
     ...c,
-    costChanged: c.cost !== null && c.cost !== undefined && c.cost !== c.current_cost,
-    priceChanged: c.price !== null && c.price !== undefined && c.price !== c.current_price,
+    costChanged: c.cost !== null && c.cost !== undefined && parseFloat(c.cost) !== parseFloat(c.current_cost),
+    priceChanged: c.price !== null && c.price !== undefined && parseFloat(c.price) !== parseFloat(c.current_price),
   }));
 
   // All other change types that affect line items directly
