@@ -38,12 +38,33 @@ export async function getPickupData(restBase, token) {
   )];
 
   const weightProductIds = new Set();
+  // Map<numericVariantId, { cost, inventoryItemGid }>
+  const variantCostMap = new Map();
+
   if (productIds.length > 0) {
     const gqlRes = await fetch(`${restBase}/graphql.json`, {
       method: 'POST',
       headers: shopifyHeaders(token),
       body: JSON.stringify({
-        query: `query($ids: [ID!]!) { nodes(ids: $ids) { ... on Product { id tags } } }`,
+        query: `query($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on Product {
+              id
+              tags
+              variants(first: 100) {
+                edges {
+                  node {
+                    id
+                    inventoryItem {
+                      id
+                      unitCost { amount }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }`,
         variables: { ids: productIds.map(id => `gid://shopify/Product/${id}`) },
       }),
     });
@@ -52,24 +73,41 @@ export async function getPickupData(restBase, token) {
       if (node?.tags?.some(t => t.toLowerCase() === 'weight')) {
         weightProductIds.add(Number(node.id.split('/').pop()));
       }
+      // Build variant cost map from each product's variant edges
+      for (const edge of node?.variants?.edges || []) {
+        const variantNode = edge.node;
+        const numericVariantId = Number(variantNode.id.split('/').pop());
+        variantCostMap.set(numericVariantId, {
+          cost: variantNode.inventoryItem?.unitCost?.amount ?? null,
+          inventoryItemGid: variantNode.inventoryItem?.id ?? null,
+        });
+      }
     }
   }
 
   return draftOrders.map(order => ({
     id: order.id,
     name: order.name,
+    created_at: order.created_at,
     customer_name: [order.shipping_address?.first_name, order.shipping_address?.last_name]
       .filter(Boolean)
       .join(' '),
-    line_items: (order.line_items || []).map(li => ({
-      id: li.id,
-      title: li.title,
-      variant_title: li.variant_title,
-      quantity: li.quantity,
-      price: li.price,
-      sku: li.sku,
-      has_weight_tag: weightProductIds.has(li.product_id),
-    })),
+    line_items: (order.line_items || []).map(li => {
+      const variantInfo = variantCostMap.get(li.variant_id) ?? null;
+      return {
+        id: li.id,
+        title: li.title,
+        variant_title: li.variant_title,
+        quantity: li.quantity,
+        price: li.price,
+        sku: li.sku,
+        has_weight_tag: weightProductIds.has(li.product_id),
+        cost: variantInfo?.cost ?? null,
+        inventory_item_id: variantInfo?.inventoryItemGid ?? null,
+        variant_id: li.variant_id,
+        product_id: li.product_id,
+      };
+    }),
   }));
 }
 
