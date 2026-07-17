@@ -331,7 +331,7 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
       }
     } catch (err) {
       for (const change of allLineItemChanges) {
-        const alreadyFailed = results.find(r => r.line_item_id === change.line_item_id && !r.success);
+        const alreadyFailed = failedIds.has(change.line_item_id);
         if (!alreadyFailed) {
           results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: err.message });
         }
