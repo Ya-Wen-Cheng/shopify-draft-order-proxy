@@ -81,11 +81,11 @@ export default {
     if (url.pathname === '/pickup/complete' && request.method === 'PUT') {
       try {
         const body = await request.json();
-        const { draft_order_id } = body;
+        const { draft_order_id, changes } = body;
         if (!draft_order_id) {
           return json({ error: 'Missing draft_order_id' }, 400);
         }
-        const result = await completeDraftOrder(restBase, token, draft_order_id);
+        const result = await completeDraftOrder(restBase, token, draft_order_id, changes || []);
         return json(result.body, result.status);
       } catch (err) {
         return json({ error: err.message }, 500);
