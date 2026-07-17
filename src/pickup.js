@@ -51,7 +51,7 @@ export async function getPickupData(restBase, token) {
             ... on Product {
               id
               tags
-              variants(first: 100) {
+              variants(first: 100) {  /* assumes ≤100 variants per product; no pagination */
                 edges {
                   node {
                     id
@@ -93,7 +93,7 @@ export async function getPickupData(restBase, token) {
       .filter(Boolean)
       .join(' '),
     line_items: (order.line_items || []).map(li => {
-      const variantInfo = variantCostMap.get(li.variant_id) ?? null;
+      const variantInfo = variantCostMap.get(li.variant_id);
       return {
         id: li.id,
         title: li.title,
