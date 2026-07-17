@@ -140,6 +140,7 @@ export function applyLineItemUpdate(lineItem, update) {
 
     case 'found':
     default:
+      // 'cost_price' type is handled in completeDraftOrder (price override applied inline after this call)
       return lineItem;
   }
 }
@@ -199,6 +200,10 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
     }
 
     if (change.costChanged) {
+      if (!change.inventory_item_id) {
+        results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: 'missing inventory_item_id' });
+        continue;
+      }
       try {
         // Step 2a: Set cost_change_source metafield to "pickup" on the product
         const metafieldRes = await fetch(`${restBase}/graphql.json`, {
@@ -259,7 +264,8 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
 
   // ── Step 3: Single fetch-then-merge for all line-item-level changes ────────
   // Includes: weight/partial/remove/found changes, plus cost_price items where priceChanged
-  const priceChanges = costPriceChanges.filter(c => c.priceChanged);
+  const failedIds = new Set(results.filter(r => !r.success).map(r => r.line_item_id));
+  const priceChanges = costPriceChanges.filter(c => c.priceChanged && !failedIds.has(c.line_item_id));
   const allLineItemChanges = [...lineItemChanges, ...priceChanges];
 
   if (allLineItemChanges.length > 0) {
@@ -273,7 +279,7 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
         // Mark all pending line-item changes as failed
         for (const change of allLineItemChanges) {
           // Don't double-add entries for items that already have a failed cost entry
-          const alreadyFailed = results.find(r => r.line_item_id === change.line_item_id && !r.success);
+          const alreadyFailed = failedIds.has(change.line_item_id);
           if (!alreadyFailed) {
             results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: JSON.stringify(getData.errors) });
           }
@@ -308,7 +314,7 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
 
         if (!putRes.ok) {
           for (const change of allLineItemChanges) {
-            const alreadyFailed = results.find(r => r.line_item_id === change.line_item_id && !r.success);
+            const alreadyFailed = failedIds.has(change.line_item_id);
             if (!alreadyFailed) {
               results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: JSON.stringify(putData.errors) });
             }
@@ -316,7 +322,7 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
         } else {
           // Mark all line-item changes as succeeded (unless already marked failed from cost step)
           for (const change of allLineItemChanges) {
-            const alreadyFailed = results.find(r => r.line_item_id === change.line_item_id && !r.success);
+            const alreadyFailed = failedIds.has(change.line_item_id);
             if (!alreadyFailed) {
               results.push({ line_item_id: change.line_item_id, title: change.title, success: true });
             }
