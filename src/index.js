@@ -98,15 +98,20 @@ export default {
         return json({ ok: true }, 200);
       }
 
-      const doId   = env.COST_CHANGE_HANDLER.idFromName(String(payload.id));
-      const stub   = env.COST_CHANGE_HANDLER.get(doId);
-      const doRes  = await stub.fetch('https://cost-change-handler/', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: rawBody,
-      });
-      const doData = await doRes.json().catch(() => ({}));
-      return json(doData, doRes.status);
+      try {
+        const doId   = env.COST_CHANGE_HANDLER.idFromName(String(payload.id));
+        const stub   = env.COST_CHANGE_HANDLER.get(doId);
+        const doRes  = await stub.fetch('https://cost-change-handler/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: rawBody,
+        });
+        const doData = await doRes.json().catch(() => ({}));
+        return json(doData, doRes.status);
+      } catch (err) {
+        console.error('webhook/cost-update worker error:', err.message, err.stack);
+        return json({ error: err.message }, 500);
+      }
     }
 
     // ── GET /pickup — Pickup Assistant mobile UI ───────────────────────
