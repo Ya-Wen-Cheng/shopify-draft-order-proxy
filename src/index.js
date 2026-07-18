@@ -109,7 +109,6 @@ export default {
         const doData = await doRes.json().catch(() => ({}));
         return json(doData, doRes.status);
       } catch (err) {
-        console.error('webhook/cost-update worker error:', err.message, err.stack);
         return json({ error: err.message }, 500);
       }
     }

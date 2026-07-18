@@ -198,7 +198,6 @@ export class CostChangeHandler {
 
       return new Response(JSON.stringify({ ok: true, logged: true }), { status: 200 });
     } catch (err) {
-      console.error('CostChangeHandler error:', err.message, err.stack);
       return new Response(JSON.stringify({ error: err.message }), { status: 500 });
     }
   }
