@@ -51,7 +51,7 @@ export async function getPickupData(restBase, token) {
             ... on Product {
               id
               tags
-              variants(first: 100) {  /* assumes ≤100 variants per product; no pagination */
+              variants(first: 100) {
                 edges {
                   node {
                     id
