@@ -66,13 +66,6 @@ export function renderPickupPage() {
   .list-card:active { opacity: 0.85; }
   .btn-back { background: #6b7280; color: #fff; margin-bottom: 12px; }
   .btn-print-list { background: #6b21a8; color: #fff; padding: 8px 14px; font-size: 13px; border: none; border-radius: 6px; cursor: pointer; margin-top: 8px; display: block; width: 100%; }
-  .btn-clear-mode { background: #6b7280; color: #fff; padding: 6px 12px; font-size: 13px; border: none; border-radius: 6px; cursor: pointer; }
-  .btn-clear-confirm { background: #dc2626; color: #fff; padding: 10px 0; font-size: 15px; border: none; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 8px; }
-  .btn-cancel-select { background: #e5e7eb; color: #374151; padding: 10px 0; font-size: 15px; border: none; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 8px; }
-  .select-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
-  .card-selected { outline: 2px solid #2563eb; }
-  .card-checkbox { width: 20px; height: 20px; margin-right: 8px; flex-shrink: 0; cursor: pointer; }
-  .card-check-row { display: flex; align-items: center; gap: 8px; }
   .progress-bar-wrap { background: #e5e7eb; border-radius: 4px; height: 8px; margin-top: 10px; overflow: hidden; }
   .progress-bar-fill { height: 100%; background: #2563eb; border-radius: 4px; width: 0%; }
   .progress-bar-fill.loading { animation: progress-loading 1.5s ease-in-out forwards; }
@@ -88,8 +81,6 @@ var state = {};
 var currentView = 'list';
 var selectedOrderId = null;
 var printedOrders = {};
-var selectionMode = false;
-var selectedForClear = {}; // { orderId: true }
 var SESSION_VIEW_KEY = 'pickup_view_order';
 
 // Restore view from sessionStorage on load/refresh
@@ -866,33 +857,31 @@ function renderOrderCard(container, order, orderState) {
   container.appendChild(card);
 }
 
-// ─── list view (homepage) ──────────────────────────────────────────────────
+// ─── deliver order ─────────────────────────────────────────────────────────
 
-async function clearSelected(orders) {
-  var ids = Object.keys(selectedForClear).filter(function (id) { return selectedForClear[id]; });
-  if (ids.length === 0) return;
-
-  var items = ids.map(function (id) {
-    var order = orders.find(function (o) { return String(o.id) === String(id); });
-    return { type: order && order.status === 'sourced' ? 'order' : 'draft_order', id: Number(id) };
-  });
-
+async function markDelivered(order) {
+  var realId = getRealOrderId(order, state[order.id]);
+  if (!realId) return;
+  var confirmed = window.confirm('Mark order ' + order.name + ' as delivered?');
+  if (!confirmed) return;
   try {
-    var res = await fetch('/pickup/clear', {
+    var res = await fetch('/pickup/deliver', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items: items }),
+      body: JSON.stringify({ order_id: realId }),
     });
     var data = await res.json();
-    if (data.all_succeeded) {
-      selectionMode = false;
-      selectedForClear = {};
-      await loadData(); // refresh list
+    if (data.success) {
+      await loadData(); // refresh list — order disappears (tagged delivered)
+    } else {
+      alert('Failed to mark as delivered. Please try again.');
     }
   } catch (err) {
-    alert('Clear failed: ' + err.message);
+    alert('Network error: ' + err.message);
   }
 }
+
+// ─── list view (homepage) ──────────────────────────────────────────────────
 
 function renderList(root, orders) {
   // Header: date + stats
@@ -905,46 +894,18 @@ function renderList(root, orders) {
 
   var header = el('div', 'list-header');
 
-  // Title row: heading + Clear button
   var titleRow = el('div');
   titleRow.style.display = 'flex';
   titleRow.style.justifyContent = 'space-between';
   titleRow.style.alignItems = 'center';
   titleRow.style.marginBottom = '4px';
   titleRow.appendChild(el('h1', null, 'Pickup Assistant'));
-  if (!selectionMode && orders.length > 0) {
-    var clearModeBtn = el('button', 'btn-clear-mode', 'Clear');
-    clearModeBtn.addEventListener('click', function () {
-      selectionMode = true;
-      selectedForClear = {};
-      rerender();
-    });
-    titleRow.appendChild(clearModeBtn);
-  }
   header.appendChild(titleRow);
   header.appendChild(el('div', 'list-date', formatDate(new Date())));
   var statsRow = el('div', 'list-stats');
   statsRow.appendChild(el('span', 'stat-incomplete', 'Incomplete: ' + incompleteCount));
   statsRow.appendChild(el('span', 'stat-completed', 'Completed: ' + completedCount));
   header.appendChild(statsRow);
-
-  // Selection mode toolbar
-  if (selectionMode) {
-    var selectBar = el('div', 'select-bar');
-    selectBar.style.marginTop = '10px';
-    var allSelected = orders.length > 0 && orders.every(function (o) { return selectedForClear[o.id]; });
-    var selectAllChk = document.createElement('input');
-    selectAllChk.type = 'checkbox';
-    selectAllChk.className = 'card-checkbox';
-    selectAllChk.checked = allSelected;
-    selectAllChk.addEventListener('change', function () {
-      orders.forEach(function (o) { selectedForClear[o.id] = selectAllChk.checked; });
-      rerender();
-    });
-    selectBar.appendChild(selectAllChk);
-    selectBar.appendChild(el('span', 'li-stat', 'Select all'));
-    header.appendChild(selectBar);
-  }
 
   root.appendChild(header);
 
@@ -960,26 +921,10 @@ function renderList(root, orders) {
     var status = getOrderStatus(order, orderState);
     var badgeClass = status === 'printed' ? 'badge-printed' : (status === 'completed' ? 'badge-completed' : 'badge-incomplete');
     var badgeText = status === 'printed' ? 'Printed' : (status === 'completed' ? 'Completed' : 'Incomplete');
-    var isSelected = !!selectedForClear[order.id];
 
-    var card = el('div', 'card list-card' + (isSelected ? ' card-selected' : ''));
+    var card = el('div', 'card list-card');
 
-    // Checkbox (selection mode) + name/badge row
-    var topRow = el('div', 'card-check-row');
-    if (selectionMode) {
-      var chk = document.createElement('input');
-      chk.type = 'checkbox';
-      chk.className = 'card-checkbox';
-      chk.checked = isSelected;
-      chk.addEventListener('change', function (e) {
-        e.stopPropagation();
-        selectedForClear[order.id] = chk.checked;
-        rerender();
-      });
-      topRow.appendChild(chk);
-    }
-    var nameBlock = el('div');
-    nameBlock.style.flex = '1';
+    // Name + badge row
     var nameBadge = el('div');
     nameBadge.style.display = 'flex';
     nameBadge.style.justifyContent = 'space-between';
@@ -989,9 +934,7 @@ function renderList(root, orders) {
     nameSpan.style.fontSize = '15px';
     nameBadge.appendChild(nameSpan);
     nameBadge.appendChild(el('span', 'status-badge ' + badgeClass, badgeText));
-    nameBlock.appendChild(nameBadge);
-    topRow.appendChild(nameBlock);
-    card.appendChild(topRow);
+    card.appendChild(nameBadge);
 
     if (order.customer_name) {
       card.appendChild(el('div', 'li-stat', order.customer_name));
@@ -1007,8 +950,8 @@ function renderList(root, orders) {
       card.appendChild(el('div', 'li-stat', summary));
     }
 
-    // Print Invoice button for completed/printed orders (hidden in selection mode)
-    if (!selectionMode && completed && realId) {
+    // Print Invoice button for completed/printed orders
+    if (completed && realId) {
       var printBtn = el('button', 'btn-print-list', '🖨  Print Invoice');
       printBtn.addEventListener('click', function (e) {
         e.stopPropagation();
@@ -1017,13 +960,8 @@ function renderList(root, orders) {
       card.appendChild(printBtn);
     }
 
-    // Tap card → detail view (or toggle selection)
+    // Tap card → detail view
     card.addEventListener('click', function () {
-      if (selectionMode) {
-        selectedForClear[order.id] = !selectedForClear[order.id];
-        rerender();
-        return;
-      }
       selectedOrderId = order.id;
       currentView = 'detail';
       sessionStorage.setItem(SESSION_VIEW_KEY, String(order.id));
@@ -1031,27 +969,25 @@ function renderList(root, orders) {
       rerender();
     });
 
+    // Swipe left → mark as delivered (completed/printed orders only)
+    if (completed && realId) {
+      var swipeStartX = null;
+      card.addEventListener('touchstart', function (e) {
+        swipeStartX = e.touches[0].clientX;
+      }, { passive: true });
+      card.addEventListener('touchend', function (e) {
+        if (swipeStartX === null) return;
+        var delta = e.changedTouches[0].clientX - swipeStartX;
+        swipeStartX = null;
+        if (delta < -60) {
+          e.preventDefault(); // prevent click
+          markDelivered(order);
+        }
+      });
+    }
+
     root.appendChild(card);
   });
-
-  // Selection mode action buttons
-  if (selectionMode) {
-    var selectedCount = Object.keys(selectedForClear).filter(function (id) { return selectedForClear[id]; }).length;
-    var confirmBtn = el('button', 'btn-clear-confirm',
-      selectedCount > 0 ? 'Clear Selected (' + selectedCount + ')' : 'Clear Selected');
-    confirmBtn.disabled = selectedCount === 0;
-    if (selectedCount === 0) confirmBtn.style.opacity = '0.5';
-    confirmBtn.addEventListener('click', function () { clearSelected(orders); });
-    root.appendChild(confirmBtn);
-
-    var cancelBtn = el('button', 'btn-cancel-select', 'Cancel');
-    cancelBtn.addEventListener('click', function () {
-      selectionMode = false;
-      selectedForClear = {};
-      rerender();
-    });
-    root.appendChild(cancelBtn);
-  }
 }
 
 // ─── detail view ───────────────────────────────────────────────────────────

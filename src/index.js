@@ -14,12 +14,13 @@
  *   GET  /pickup/data                       → open draft orders tagged draft-order-tab
  *   PUT  /pickup/update                     → update draft order line items (fetch-then-merge)
  *   PUT  /pickup/complete                   → complete draft order, tag resulting order `sourced`
+ *   PUT  /pickup/deliver                    → add 'delivered' tag to a sourced order
  *   GET  /invoice/{order_id}                → printable order invoice
  */
 
 export { CostChangeHandler } from './cost-change-handler.js';
 
-import { getPickupData, updateLineItems, completeDraftOrder, clearOrders } from './pickup.js';
+import { getPickupData, updateLineItems, completeDraftOrder, markOrderDelivered } from './pickup.js';
 import { renderPickupPage } from './pickup-template.js';
 import { renderInvoiceHtml } from './invoice-template.js';
 
@@ -158,12 +159,12 @@ export default {
       }
     }
 
-    // ── PUT /pickup/clear — remove draft-order-tab / add delivered tag ──
-    if (url.pathname === '/pickup/clear' && request.method === 'PUT') {
+    // ── PUT /pickup/deliver — add 'delivered' tag to a sourced order ──
+    if (url.pathname === '/pickup/deliver' && request.method === 'PUT') {
       try {
         const body = await request.json();
-        if (!Array.isArray(body.items)) return json({ error: 'items required' }, 400);
-        const result = await clearOrders(restBase, token, body.items);
+        if (!body.order_id) return json({ error: 'order_id required' }, 400);
+        const result = await markOrderDelivered(restBase, token, body.order_id);
         return json(result);
       } catch (err) {
         return json({ error: err.message }, 500);

@@ -726,31 +726,10 @@ describe('PUT /pickup/complete — batched changes', () => {
   });
 });
 
-// ── PUT /pickup/clear ────────────────────────────────────────────────────────
+// ── PUT /pickup/deliver ───────────────────────────────────────────────────────
 
-describe('PUT /pickup/clear', () => {
+describe('PUT /pickup/deliver', () => {
   beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
-
-  it('removes draft-order-tab tag from a draft order', async () => {
-    globalThis.fetch.mockImplementation((url, opts) => {
-      if (url.includes('/draft_orders/1.json') && !opts?.method) {
-        return Promise.resolve(new Response(JSON.stringify({ draft_order: { id: 1, tags: 'draft-order-tab, priced' } }), { status: 200 }));
-      }
-      return Promise.resolve(new Response(JSON.stringify({ draft_order: { id: 1 } }), { status: 200 }));
-    });
-
-    const res = await call(put('/pickup/clear', { items: [{ type: 'draft_order', id: 1 }] }));
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.all_succeeded).toBe(true);
-    expect(data.results[0]).toMatchObject({ id: 1, type: 'draft_order', success: true });
-
-    const putCall = globalThis.fetch.mock.calls.find(([u, o]) => u.includes('/draft_orders/1.json') && o?.method === 'PUT');
-    expect(putCall).toBeDefined();
-    const body = JSON.parse(putCall[1].body);
-    expect(body.draft_order.tags).not.toContain('draft-order-tab');
-    expect(body.draft_order.tags).toContain('priced');
-  });
 
   it('adds delivered tag to a sourced order', async () => {
     globalThis.fetch.mockImplementation((url, opts) => {
@@ -760,11 +739,10 @@ describe('PUT /pickup/clear', () => {
       return Promise.resolve(new Response(JSON.stringify({ order: { id: 9001 } }), { status: 200 }));
     });
 
-    const res = await call(put('/pickup/clear', { items: [{ type: 'order', id: 9001 }] }));
+    const res = await call(put('/pickup/deliver', { order_id: 9001 }));
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.all_succeeded).toBe(true);
-    expect(data.results[0]).toMatchObject({ id: 9001, type: 'order', success: true });
+    expect(data.success).toBe(true);
 
     const putCall = globalThis.fetch.mock.calls.find(([u, o]) => u.includes('/orders/9001.json') && o?.method === 'PUT');
     expect(putCall).toBeDefined();
@@ -781,49 +759,24 @@ describe('PUT /pickup/clear', () => {
       return Promise.resolve(new Response('{}', { status: 200 }));
     });
 
-    const res = await call(put('/pickup/clear', { items: [{ type: 'order', id: 9001 }] }));
+    const res = await call(put('/pickup/deliver', { order_id: 9001 }));
     const data = await res.json();
-    expect(data.all_succeeded).toBe(true);
+    expect(data.success).toBe(true);
     const putCall = globalThis.fetch.mock.calls.find(([u, o]) => u.includes('/orders/9001.json') && o?.method === 'PUT');
     expect(putCall).toBeUndefined();
   });
 
-  it('handles mixed batch: draft order + sourced order', async () => {
-    globalThis.fetch.mockImplementation((url, opts) => {
-      if (url.includes('/draft_orders/1.json') && !opts?.method) {
-        return Promise.resolve(new Response(JSON.stringify({ draft_order: { id: 1, tags: 'draft-order-tab' } }), { status: 200 }));
-      }
-      if (url.includes('/orders/9001.json') && !opts?.method) {
-        return Promise.resolve(new Response(JSON.stringify({ order: { id: 9001, tags: 'sourced' } }), { status: 200 }));
-      }
-      return Promise.resolve(new Response('{}', { status: 200 }));
-    });
-
-    const res = await call(put('/pickup/clear', {
-      items: [{ type: 'draft_order', id: 1 }, { type: 'order', id: 9001 }],
-    }));
-    const data = await res.json();
-    expect(data.all_succeeded).toBe(true);
-    expect(data.results).toHaveLength(2);
-  });
-
-  it('returns failure result when Shopify returns error', async () => {
+  it('returns error when Shopify returns error', async () => {
     globalThis.fetch.mockImplementation((url) => {
-      if (url.includes('/draft_orders/1.json')) {
-        return Promise.resolve(new Response(JSON.stringify({ errors: 'Not Found' }), { status: 404 }));
-      }
-      return Promise.resolve(new Response('{}', { status: 200 }));
+      return Promise.resolve(new Response(JSON.stringify({ errors: 'Not Found' }), { status: 404 }));
     });
 
-    const res = await call(put('/pickup/clear', { items: [{ type: 'draft_order', id: 1 }] }));
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.all_succeeded).toBe(false);
-    expect(data.results[0]).toMatchObject({ id: 1, type: 'draft_order', success: false });
+    const res = await call(put('/pickup/deliver', { order_id: 9001 }));
+    expect(res.status).toBe(500);
   });
 
-  it('returns 400 when items missing', async () => {
-    const res = await call(put('/pickup/clear', {}));
+  it('returns 400 when order_id missing', async () => {
+    const res = await call(put('/pickup/deliver', {}));
     expect(res.status).toBe(400);
   });
 });

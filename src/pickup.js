@@ -467,58 +467,27 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
   return { status: 200, body: { results, all_succeeded: true, draft_order: completeData.draft_order, order_id: orderId } };
 }
 
-// ── PUT /pickup/clear ───────────────────────────────────────────────────────
-// items: [{ type: 'draft_order'|'order', id }]
-// draft_order → remove 'draft-order-tab' tag
-// order       → add 'delivered' tag
+// ── PUT /pickup/deliver ─────────────────────────────────────────────────────
+// Adds 'delivered' tag to a sourced (real) order, removing it from the pickup list.
 
-export async function clearOrders(restBase, token, items = []) {
-  const results = [];
+export async function markOrderDelivered(restBase, token, orderId) {
+  const getRes = await fetch(`${restBase}/orders/${orderId}.json`, { headers: shopifyHeaders(token) });
+  const getData = await getRes.json();
+  if (!getRes.ok) throw new Error(JSON.stringify(getData.errors));
 
-  for (const item of items) {
-    try {
-      if (item.type === 'draft_order') {
-        const getRes = await fetch(`${restBase}/draft_orders/${item.id}.json`, { headers: shopifyHeaders(token) });
-        const getData = await getRes.json();
-        if (!getRes.ok) throw new Error(JSON.stringify(getData.errors));
-
-        const tags = (getData.draft_order.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-        const newTags = tags.filter(t => t !== 'draft-order-tab');
-        const putRes = await fetch(`${restBase}/draft_orders/${item.id}.json`, {
-          method: 'PUT',
-          headers: shopifyHeaders(token),
-          body: JSON.stringify({ draft_order: { id: Number(item.id), tags: newTags.join(', ') } }),
-        });
-        if (!putRes.ok) {
-          const putData = await putRes.json();
-          throw new Error(JSON.stringify(putData.errors));
-        }
-        results.push({ id: item.id, type: item.type, success: true });
-
-      } else if (item.type === 'order') {
-        const getRes = await fetch(`${restBase}/orders/${item.id}.json`, { headers: shopifyHeaders(token) });
-        const getData = await getRes.json();
-        if (!getRes.ok) throw new Error(JSON.stringify(getData.errors));
-
-        const tags = (getData.order.tags || '').split(',').map(t => t.trim()).filter(Boolean);
-        if (!tags.includes('delivered')) {
-          tags.push('delivered');
-          const putRes = await fetch(`${restBase}/orders/${item.id}.json`, {
-            method: 'PUT',
-            headers: shopifyHeaders(token),
-            body: JSON.stringify({ order: { id: Number(item.id), tags: tags.join(', ') } }),
-          });
-          if (!putRes.ok) {
-            const putData = await putRes.json();
-            throw new Error(JSON.stringify(putData.errors));
-          }
-        }
-        results.push({ id: item.id, type: item.type, success: true });
-      }
-    } catch (err) {
-      results.push({ id: item.id, type: item.type, success: false, error: err.message });
+  const tags = (getData.order.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+  if (!tags.includes('delivered')) {
+    tags.push('delivered');
+    const putRes = await fetch(`${restBase}/orders/${orderId}.json`, {
+      method: 'PUT',
+      headers: shopifyHeaders(token),
+      body: JSON.stringify({ order: { id: Number(orderId), tags: tags.join(', ') } }),
+    });
+    if (!putRes.ok) {
+      const putData = await putRes.json();
+      throw new Error(JSON.stringify(putData.errors));
     }
   }
 
-  return { results, all_succeeded: results.every(r => r.success) };
+  return { success: true };
 }
