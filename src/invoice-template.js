@@ -17,13 +17,15 @@ export function renderInvoiceHtml(order) {
   const deliveryFee = isMember ? '0.00' : (shippingLine ? shippingLine.price : '0.00');
 
   const lineItemsHtml = (order.line_items || []).map(li => {
-    const weightProp = (li.properties || []).find(p => /weight/i.test(p.name));
+    const weightProp = (li.properties || []).find(p => p.name === 'Weight (lb)');
+    const breakdownProp = (li.properties || []).find(p => p.name === 'Price Breakdown');
     const lineTotal = (Number(li.price) * Number(li.quantity)).toFixed(2);
     return `
       <tr>
         <td>
           ${escapeHtml(li.title)}${li.variant_title ? ' — ' + escapeHtml(li.variant_title) : ''}
           ${weightProp ? `<div class="weight-note">Weight (lb): ${escapeHtml(weightProp.value)}</div>` : ''}
+          ${breakdownProp ? `<div class="weight-note">${escapeHtml(breakdownProp.value)}</div>` : ''}
         </td>
         <td>${li.quantity}</td>
         <td>$${escapeHtml(li.price)}</td>
