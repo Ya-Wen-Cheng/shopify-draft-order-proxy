@@ -184,6 +184,21 @@ describe('PUT /pickup/update', () => {
     expect(li.properties).toContainEqual({ name: 'Price Breakdown', value: '$2.50/lb × 2 lb = $5.00' });
   });
 
+  it('uses unit_price from change (not stale lineItem.price) when driver updated price', async () => {
+    mockFetch();
+    // lineItem price is $2.50/lb but driver confirmed $3.00/lb in cost/price panel
+    await call(put('/pickup/update', {
+      draft_order_id: 1,
+      updates: [{ line_item_id: 101, type: 'weight', weights: [1.0, 2.0], unit_price: '3.00' }],
+    }));
+
+    const [, putOpts] = globalThis.fetch.mock.calls.find(([, o]) => o?.method === 'PUT');
+    const body = JSON.parse(putOpts.body);
+    const li = body.draft_order.line_items.find(i => i.id === 101);
+    expect(li.price).toBe('9.00'); // (1.0+2.0) * 3.00, not * 2.50
+    expect(li.properties).toContainEqual({ name: 'Price Breakdown', value: '$3.00/lb × 3 lb = $9.00' });
+  });
+
   it('fetch-then-merge preserves untouched line items', async () => {
     mockFetch();
     await call(put('/pickup/update', {

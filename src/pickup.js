@@ -126,7 +126,9 @@ export function applyLineItemUpdate(lineItem, update) {
     case 'weight': {
       const weights = (update.weights || []).map(Number);
       const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-      const unitPrice = Number(lineItem.price);
+      // Prefer unit_price from the change (driver's confirmed price per lb,
+      // including any cost/price panel update). Fall back to server price.
+      const unitPrice = Number(update.unit_price ?? lineItem.price);
       const totalPrice = (totalWeight * unitPrice).toFixed(2);
       return {
         ...lineItem,
