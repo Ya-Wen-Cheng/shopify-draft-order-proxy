@@ -460,24 +460,44 @@ function buildOrderSummary(order, orderState) {
 
   order.line_items.forEach(function (li) {
     var item = orderState.items[li.id];
-    var qty = (item && item.resolvedType === 'partial' && item.resolvedQuantity !== null)
-      ? item.resolvedQuantity
-      : li.quantity;
 
-    var effectivePrice = (item && item.newPrice !== null) ? item.newPrice : parseFloat(li.price || 0);
-    totalPrice += effectivePrice * qty;
+    // Skip removed items
+    if (item && item.resolvedType === 'remove') return;
 
-    if (item && item.newCost !== null) {
-      totalCost += item.newCost * qty;
-    } else if (li.cost !== null && li.cost !== undefined) {
-      var c = parseFloat(li.cost);
-      if (!isNaN(c)) {
-        totalCost += c * qty;
+    if (item && item.resolvedType === 'weight' && item.confirmedWeights && item.confirmedWeights.length > 0) {
+      // Weight item: price = totalWeight × pricePerLb, qty collapses to 1
+      var totalWeight = item.confirmedWeights.reduce(function (s, w) { return s + Number(w); }, 0);
+      var pricePerLb = (item.newPrice !== null) ? item.newPrice : parseFloat(li.price || 0);
+      totalPrice += totalWeight * pricePerLb;
+
+      var costPerLb = (item.newCost !== null) ? item.newCost
+        : (li.cost !== null && li.cost !== undefined) ? parseFloat(li.cost) : null;
+      if (costPerLb === null || isNaN(costPerLb)) {
+        anyNullCost = true;
+      } else {
+        totalCost += totalWeight * costPerLb;
+      }
+    } else {
+      // Unit item (or unresolved weight item): use qty × per-unit price
+      var qty = (item && item.resolvedType === 'partial' && item.resolvedQuantity !== null)
+        ? item.resolvedQuantity
+        : li.quantity;
+
+      var effectivePrice = (item && item.newPrice !== null) ? item.newPrice : parseFloat(li.price || 0);
+      totalPrice += effectivePrice * qty;
+
+      if (item && item.newCost !== null) {
+        totalCost += item.newCost * qty;
+      } else if (li.cost !== null && li.cost !== undefined) {
+        var c = parseFloat(li.cost);
+        if (!isNaN(c)) {
+          totalCost += c * qty;
+        } else {
+          anyNullCost = true;
+        }
       } else {
         anyNullCost = true;
       }
-    } else {
-      anyNullCost = true;
     }
   });
 
