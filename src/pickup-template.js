@@ -273,7 +273,9 @@ function loadPrintedOrders() {
 }
 
 function printInvoice(draftOrderId, realOrderId) {
+  // Key by both IDs: draft order ID for in-session display, real order ID for after page refresh
   printedOrders[draftOrderId] = true;
+  if (realOrderId && realOrderId !== draftOrderId) printedOrders[realOrderId] = true;
   savePrintedOrders();
   window.open('/invoice/' + realOrderId, '_blank');
   rerender();
