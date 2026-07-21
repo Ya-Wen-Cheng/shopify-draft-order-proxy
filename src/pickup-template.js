@@ -71,6 +71,13 @@ export function renderPickupPage() {
   .progress-bar-fill.loading { animation: progress-loading 1.5s ease-in-out forwards; }
   .progress-bar-fill.done { width: 100%; transition: width 0.3s ease-out; }
   @keyframes progress-loading { 0% { width: 0%; } 100% { width: 80%; } }
+  /* ── confirm modal ── */
+  .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 200; display: flex; align-items: center; justify-content: center; }
+  .modal-box { background: #fff; border-radius: 12px; padding: 24px 20px; margin: 16px; max-width: 320px; width: 100%; box-shadow: 0 4px 24px rgba(0,0,0,0.2); }
+  .modal-msg { font-size: 15px; color: #111; margin-bottom: 20px; line-height: 1.5; }
+  .modal-actions { display: flex; gap: 10px; }
+  .btn-modal-confirm { flex: 1; background: #22c55e; color: #fff; border: none; border-radius: 6px; padding: 12px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  .btn-modal-cancel { flex: 1; background: #e5e7eb; color: #374151; border: none; border-radius: 6px; padding: 12px; font-size: 15px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -857,12 +864,38 @@ function renderOrderCard(container, order, orderState) {
   container.appendChild(card);
 }
 
+// ─── custom confirm modal ──────────────────────────────────────────────────
+
+function showConfirm(message, confirmLabel) {
+  return new Promise(function (resolve) {
+    var backdrop = el('div', 'modal-backdrop');
+    var box = el('div', 'modal-box');
+    box.appendChild(el('div', 'modal-msg', message));
+    var actions = el('div', 'modal-actions');
+    var cancelBtn = el('button', 'btn-modal-cancel', 'Cancel');
+    var confirmBtn = el('button', 'btn-modal-confirm', confirmLabel || 'Confirm');
+    cancelBtn.addEventListener('click', function () {
+      document.body.removeChild(backdrop);
+      resolve(false);
+    });
+    confirmBtn.addEventListener('click', function () {
+      document.body.removeChild(backdrop);
+      resolve(true);
+    });
+    actions.appendChild(cancelBtn);
+    actions.appendChild(confirmBtn);
+    box.appendChild(actions);
+    backdrop.appendChild(box);
+    document.body.appendChild(backdrop);
+  });
+}
+
 // ─── deliver order ─────────────────────────────────────────────────────────
 
 async function markDelivered(order) {
   var realId = getRealOrderId(order, state[order.id]);
   if (!realId) return;
-  var confirmed = window.confirm('Mark order ' + order.name + ' as delivered?');
+  var confirmed = await showConfirm('Mark order ' + order.name + ' as delivered?', 'Mark as Delivered');
   if (!confirmed) return;
   try {
     var res = await fetch('/pickup/deliver', {
@@ -874,10 +907,10 @@ async function markDelivered(order) {
     if (data.success) {
       await loadData(); // refresh list — order disappears (tagged delivered)
     } else {
-      alert('Failed to mark as delivered. Please try again.');
+      await showConfirm('Failed to mark as delivered. Please try again.', 'OK');
     }
   } catch (err) {
-    alert('Network error: ' + err.message);
+    await showConfirm('Network error: ' + err.message, 'OK');
   }
 }
 
@@ -1016,17 +1049,11 @@ function renderList(root, orders) {
           if (swipeWidth >= cardWidth / 2) {
             triggered = true;
             e.preventDefault(); // prevent click
-            // Reset instantly (no transition) and force a paint before the blocking confirm()
             overlay.style.transition = 'none';
             overlay.style.width = '0';
             swipeStartX = null;
-            void overlay.offsetWidth; // flush reflow
-            requestAnimationFrame(function () {
-              requestAnimationFrame(function () {
-                triggered = false;
-                markDelivered(order);
-              });
-            });
+            triggered = false;
+            markDelivered(order); // custom modal — non-blocking, no rAF needed
           }
         }
       }, { passive: false });
