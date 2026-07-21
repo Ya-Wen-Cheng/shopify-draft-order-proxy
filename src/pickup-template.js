@@ -110,9 +110,11 @@ function getItemState(orderId, li) {
       resolved: false,
       resolvedType: null,
       hasWeight: !!li.has_weight_tag,
-      bulk: false,
+      weightMode: 'per_item', // 'per_item' | 'same_weight' | 'bulk'
       weightCount: li.quantity,
       weights: [''],
+      sameWeightValue: '',
+      sameWeightQty: li.quantity,
       quantity: li.quantity,
       unitPrice: li.price,
       resolvedQuantity: null,
@@ -164,8 +166,10 @@ function saveStateToStorage() {
         resolved: item.resolved,
         resolvedType: item.resolvedType,
         resolvedQuantity: item.resolvedQuantity,
-        bulk: item.bulk,
+        weightMode: item.weightMode,
         weights: item.weights,
+        sameWeightValue: item.sameWeightValue,
+        sameWeightQty: item.sameWeightQty,
         confirmedWeights: item.confirmedWeights,
         costPriceConfirmed: item.costPriceConfirmed,
         newCost: item.newCost,
@@ -212,8 +216,11 @@ async function loadData() {
         itemState.resolved = savedItem.resolved || false;
         itemState.resolvedType = savedItem.resolvedType || null;
         itemState.resolvedQuantity = savedItem.resolvedQuantity !== undefined ? savedItem.resolvedQuantity : null;
-        itemState.bulk = savedItem.bulk || false;
+        // weightMode: new field; fall back from legacy 'bulk' boolean
+        itemState.weightMode = savedItem.weightMode || (savedItem.bulk ? 'bulk' : 'per_item');
         itemState.weights = savedItem.weights || [''];
+        itemState.sameWeightValue = savedItem.sameWeightValue || '';
+        itemState.sameWeightQty = savedItem.sameWeightQty !== undefined ? savedItem.sameWeightQty : itemState.quantity;
         itemState.confirmedWeights = savedItem.confirmedWeights || null;
         itemState.costPriceConfirmed = savedItem.costPriceConfirmed || false;
         itemState.newCost = savedItem.newCost !== undefined ? savedItem.newCost : null;
@@ -228,11 +235,18 @@ async function loadData() {
 
 function saveWeight(orderId, li, itemState) {
   var weights;
-  if (itemState.bulk) {
+  if (itemState.weightMode === 'bulk') {
     var w = parseFloat(itemState.weights[0]);
     if (isNaN(w) || w <= 0) return;
     weights = [w];
+  } else if (itemState.weightMode === 'same_weight') {
+    var wVal = parseFloat(itemState.sameWeightValue);
+    var qty = parseInt(itemState.sameWeightQty, 10);
+    if (isNaN(wVal) || wVal <= 0 || isNaN(qty) || qty < 1) return;
+    qty = Math.min(qty, li.quantity); // cap at original qty
+    weights = Array(qty).fill(wVal);
   } else {
+    // per_item
     weights = itemState.weights
       .slice(0, itemState.quantity)
       .filter(function (w) { return w !== '' && !isNaN(Number(w)); })
@@ -340,31 +354,71 @@ function buildWeightPanel(orderId, li, itemState) {
   var unitPrice = itemState.newPrice !== null ? itemState.newPrice : parseFloat(li.price || 0);
   panel.appendChild(el('div', 'suggestions', 'Price per unit: ' + fmtMoney(unitPrice) + ' — total = weight × this price'));
 
+  // three-way mode toggle
   var toggle = el('div', 'toggle');
-  toggle.innerHTML =
-    '<label><input type="radio" name="mode-' + li.id + '"' + (!itemState.bulk ? ' checked' : '') + '> Per-Item</label>' +
-    '<label><input type="radio" name="mode-' + li.id + '"' + (itemState.bulk ? ' checked' : '') + '> Bulk</label>';
-  var radios = toggle.querySelectorAll('input');
-  radios[0].addEventListener('change', function () {
-    itemState.bulk = false;
-    itemState.weights = new Array(itemState.quantity).fill('');
-    rerender();
-  });
-  radios[1].addEventListener('change', function () {
-    itemState.bulk = true;
-    itemState.weights = [''];
-    rerender();
+  var modes = [
+    { value: 'per_item',    label: 'Per-Item' },
+    { value: 'same_weight', label: 'Same Weight' },
+    { value: 'bulk',        label: 'Bulk' },
+  ];
+  modes.forEach(function (m) {
+    var lbl = document.createElement('label');
+    lbl.style.marginRight = '12px';
+    lbl.style.fontSize = '13px';
+    var radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'mode-' + li.id;
+    radio.checked = itemState.weightMode === m.value;
+    radio.addEventListener('change', function () {
+      itemState.weightMode = m.value;
+      if (m.value === 'per_item') itemState.weights = new Array(itemState.quantity).fill('');
+      if (m.value === 'bulk')     itemState.weights = [''];
+      rerender();
+    });
+    lbl.appendChild(radio);
+    lbl.appendChild(document.createTextNode(' ' + m.label));
+    toggle.appendChild(lbl);
   });
   panel.appendChild(toggle);
 
   var row = el('div', 'weight-row');
-  if (itemState.bulk) {
-    var input = document.createElement('input');
-    input.type = 'number'; input.step = '0.01'; input.placeholder = 'Total lbs';
-    input.value = itemState.weights[0] || '';
-    input.addEventListener('input', function (e) { itemState.weights[0] = e.target.value; });
-    row.appendChild(input);
+
+  if (itemState.weightMode === 'bulk') {
+    var bulkInput = document.createElement('input');
+    bulkInput.type = 'number'; bulkInput.step = '0.01'; bulkInput.placeholder = 'Total lbs';
+    bulkInput.value = itemState.weights[0] || '';
+    bulkInput.addEventListener('input', function (e) { itemState.weights[0] = e.target.value; });
+    row.appendChild(bulkInput);
+
+  } else if (itemState.weightMode === 'same_weight') {
+    var swLabel = el('div', null);
+    swLabel.style.fontSize = '13px';
+    swLabel.style.marginBottom = '4px';
+    swLabel.textContent = 'Weight per item (lb):';
+    row.appendChild(swLabel);
+
+    var swInput = document.createElement('input');
+    swInput.type = 'number'; swInput.step = '0.01'; swInput.placeholder = 'lb each';
+    swInput.value = itemState.sameWeightValue || '';
+    swInput.addEventListener('input', function (e) { itemState.sameWeightValue = e.target.value; });
+    row.appendChild(swInput);
+
+    var qtyLabel = el('div', null);
+    qtyLabel.style.fontSize = '13px';
+    qtyLabel.style.marginTop = '6px';
+    qtyLabel.style.marginBottom = '4px';
+    qtyLabel.textContent = 'Quantity found:';
+    row.appendChild(qtyLabel);
+
+    var qtyInput = document.createElement('input');
+    qtyInput.type = 'number'; qtyInput.min = '1'; qtyInput.max = String(li.quantity);
+    qtyInput.placeholder = String(li.quantity);
+    qtyInput.value = itemState.sameWeightQty !== '' ? itemState.sameWeightQty : li.quantity;
+    qtyInput.addEventListener('input', function (e) { itemState.sameWeightQty = e.target.value; });
+    row.appendChild(qtyInput);
+
   } else {
+    // per_item: one input per box
     for (var i = 0; i < itemState.quantity; i++) {
       (function (idx) {
         var input = document.createElement('input');
@@ -378,6 +432,7 @@ function buildWeightPanel(orderId, li, itemState) {
   panel.appendChild(row);
 
   var confirmBtn = el('button', 'btn btn-found', 'Confirm Weight');
+  confirmBtn.style.marginTop = '8px';
   confirmBtn.addEventListener('click', function () { saveWeight(orderId, li, itemState); });
   panel.appendChild(confirmBtn);
 
@@ -546,10 +601,14 @@ function render(orders) {
         row.appendChild(el('div', 'li-stat', 'Qty: ' + li.quantity));
       }
 
-      // confirmed weights (green)
+      // confirmed weights (green) — collapse "X, X, X lb" to "X lb × N" when uniform
       if (itemState.confirmedWeights) {
-        row.appendChild(el('div', 'li-stat confirmed',
-          'Weight: ' + itemState.confirmedWeights.join(', ') + ' lb'));
+        var cw = itemState.confirmedWeights;
+        var allSame = cw.length > 1 && cw.every(function (w) { return w === cw[0]; });
+        var weightStr = allSame
+          ? cw[0] + ' lb × ' + cw.length
+          : cw.join(', ') + ' lb';
+        row.appendChild(el('div', 'li-stat confirmed', 'Weight: ' + weightStr));
       }
 
       // cost / price / margin — each field turns green only if the driver changed it
