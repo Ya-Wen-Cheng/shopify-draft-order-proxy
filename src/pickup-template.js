@@ -90,17 +90,23 @@ var selectedOrderId = null;
 var printedOrders = {};
 var selectionMode = false;
 var selectedForClear = {}; // { orderId: true }
+var SESSION_VIEW_KEY = 'pickup_view_order';
 
-// Restore view from URL hash on load/refresh (e.g. #order-12345)
+// Restore view from sessionStorage on load/refresh
 (function () {
-  var m = location.hash.match(/^#order-(\d+)$/);
-  if (m) { selectedOrderId = Number(m[1]); currentView = 'detail'; }
+  var saved = sessionStorage.getItem(SESSION_VIEW_KEY);
+  if (saved) { selectedOrderId = Number(saved); currentView = 'detail'; }
 })();
 
 window.addEventListener('popstate', function () {
   var m = location.hash.match(/^#order-(\d+)$/);
-  if (m) { selectedOrderId = Number(m[1]); currentView = 'detail'; }
-  else   { selectedOrderId = null; currentView = 'list'; }
+  if (m) {
+    selectedOrderId = Number(m[1]); currentView = 'detail';
+    sessionStorage.setItem(SESSION_VIEW_KEY, m[1]);
+  } else {
+    selectedOrderId = null; currentView = 'list';
+    sessionStorage.removeItem(SESSION_VIEW_KEY);
+  }
   rerender();
 });
 
@@ -323,10 +329,6 @@ async function loadData() {
       }
     });
   });
-  // Re-apply hash-based navigation after async load (in case anything reset it)
-  var hashMatch = location.hash.match(/^#order-(\d+)$/);
-  if (hashMatch) { selectedOrderId = Number(hashMatch[1]); currentView = 'detail'; }
-
   render(orders);
 }
 
@@ -1024,6 +1026,7 @@ function renderList(root, orders) {
       }
       selectedOrderId = order.id;
       currentView = 'detail';
+      sessionStorage.setItem(SESSION_VIEW_KEY, String(order.id));
       history.pushState(null, '', '#order-' + order.id);
       rerender();
     });
@@ -1069,6 +1072,7 @@ function renderDetail(root, orders, orderId) {
   backBtn.addEventListener('click', function () {
     currentView = 'list';
     selectedOrderId = null;
+    sessionStorage.removeItem(SESSION_VIEW_KEY);
     history.pushState(null, '', '#');
     rerender();
   });
