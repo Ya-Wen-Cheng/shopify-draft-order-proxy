@@ -308,18 +308,31 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
 
         // ── Use GraphQL draftOrderUpdate so price overrides are respected ────────
         // REST API silently ignores price on variant line items.
-        // For variant items: use priceOverride (originalUnitPrice is ignored when variantId is set).
-        // For custom items (no variantId): use originalUnitPrice.
+        //
+        // Shopify rules:
+        //   - priceOverride works for variant line items (overrides catalog price).
+        //   - originalUnitPrice/originalUnitPriceWithCurrency is ignored when
+        //     variantId is provided; it only applies to custom line items.
+        //   - weight is also ignored when variantId is provided.
+        //
+        // Weight items are converted to custom line items (no variantId) so that
+        // originalUnitPrice (= totalWeight × pricePerLb) is honoured. Unit variant
+        // items keep their variantId and use priceOverride.
         const gqlLineItems = mergedLineItems.map(li => {
+          const isWeightItem = (li.properties || []).some(p => p.name === 'Weight (lb)');
           const input = {
             quantity: li.quantity,
             customAttributes: (li.properties || []).map(p => ({ key: p.name, value: p.value })),
           };
-          if (li.variant_id) {
+          if (li.variant_id && !isWeightItem) {
+            // Unit variant item: keep product association, override price.
             input.variantId = `gid://shopify/ProductVariant/${li.variant_id}`;
             input.priceOverride = { amount: String(li.price), currencyCode: 'USD' };
           } else {
-            input.title = li.title;
+            // Weight items and existing custom items: omit variantId so
+            // originalUnitPrice (= calculated total) is applied.
+            const title = li.variant_title ? `${li.title} - ${li.variant_title}` : li.title;
+            input.title = title;
             input.requiresShipping = li.requires_shipping ?? true;
             input.originalUnitPrice = String(li.price);
           }
