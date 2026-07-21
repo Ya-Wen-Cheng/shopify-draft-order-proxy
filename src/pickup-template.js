@@ -72,7 +72,12 @@ export function renderPickupPage() {
   .select-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
   .card-selected { outline: 2px solid #2563eb; }
   .card-checkbox { width: 20px; height: 20px; margin-right: 8px; flex-shrink: 0; cursor: pointer; }
-  .card-check-row { display: flex; align-items: flex-start; gap: 8px; }
+  .card-check-row { display: flex; align-items: center; gap: 8px; }
+  .progress-bar-wrap { background: #e5e7eb; border-radius: 4px; height: 8px; margin-top: 10px; overflow: hidden; }
+  .progress-bar-fill { height: 100%; background: #2563eb; border-radius: 4px; width: 0%; }
+  .progress-bar-fill.loading { animation: progress-loading 1.5s ease-in-out forwards; }
+  .progress-bar-fill.done { width: 100%; transition: width 0.3s ease-out; }
+  @keyframes progress-loading { 0% { width: 0%; } 100% { width: 80%; } }
 </style>
 </head>
 <body>
@@ -316,6 +321,10 @@ async function loadData() {
       }
     });
   });
+  // Re-apply hash-based navigation after async load (in case anything reset it)
+  var hashMatch = location.hash.match(/^#order-(\d+)$/);
+  if (hashMatch) { selectedOrderId = Number(hashMatch[1]); currentView = 'detail'; }
+
   render(orders);
 }
 
@@ -675,21 +684,29 @@ function renderOrderCard(container, order, orderState) {
     row.appendChild(el('div', 'li-title',
       li.title + (li.variant_title ? ' (' + li.variant_title + ')' : '')));
 
-    // qty — green with "X (of Y)" when partial
+    // qty — green variants for partial/remove/same-weight-reduced; plain otherwise
     if (itemState.resolvedType === 'partial' && itemState.resolvedQuantity !== null) {
       row.appendChild(el('div', 'li-stat confirmed', 'Qty: ' + itemState.resolvedQuantity + ' (of ' + li.quantity + ')'));
+    } else if (itemState.resolvedType === 'remove') {
+      row.appendChild(el('div', 'li-stat confirmed', 'Qty: 0 (of ' + li.quantity + ')'));
+    } else if (itemState.confirmedWeights && itemState.weightMode === 'same_weight' && itemState.confirmedWeights.length < li.quantity) {
+      row.appendChild(el('div', 'li-stat confirmed', 'Qty: ' + itemState.confirmedWeights.length + ' (of ' + li.quantity + ')'));
     } else {
       row.appendChild(el('div', 'li-stat', 'Qty: ' + li.quantity));
     }
 
-    // confirmed weights (green) — collapse "X, X, X lb" to "X lb × N" when uniform
+    // confirmed weights (green) — same_weight: show per-item weight + qty change separately
     if (itemState.confirmedWeights) {
       var cw = itemState.confirmedWeights;
-      var allSame = cw.length > 1 && cw.every(function (w) { return w === cw[0]; });
-      var weightStr = allSame
-        ? cw[0] + ' lb × ' + cw.length
-        : cw.join(', ') + ' lb';
-      row.appendChild(el('div', 'li-stat confirmed', 'Weight: ' + weightStr));
+      if (itemState.weightMode === 'same_weight') {
+        row.appendChild(el('div', 'li-stat confirmed', 'Weight: ' + cw[0] + ' lb'));
+      } else {
+        var allSame = cw.length > 1 && cw.every(function (w) { return w === cw[0]; });
+        var weightStr = allSame
+          ? cw[0] + ' lb × ' + cw.length
+          : cw.join(', ') + ' lb';
+        row.appendChild(el('div', 'li-stat confirmed', 'Weight: ' + weightStr));
+      }
     }
 
     // cost / price / margin — each field turns green only if the driver changed it
@@ -810,11 +827,17 @@ function renderOrderCard(container, order, orderState) {
 
   // ── complete / progress / results ──
   if (orderState.completing) {
-    card.appendChild(el('div', 'progress', '⏳ Updating… please wait'));
+    card.appendChild(el('div', 'li-stat', '⏳ Updating…'));
+    var pbWrap = el('div', 'progress-bar-wrap');
+    pbWrap.appendChild(el('div', 'progress-bar-fill loading'));
+    card.appendChild(pbWrap);
   } else if (orderState.completed) {
     var allOk = !orderState.results.some(function (r) { return !r.success; });
     if (allOk) {
-      card.appendChild(el('div', 'result-success', '✅ All ' + orderState.results.length + ' items updated successfully.'));
+      var pbWrapDone = el('div', 'progress-bar-wrap');
+      pbWrapDone.appendChild(el('div', 'progress-bar-fill done'));
+      card.appendChild(pbWrapDone);
+      card.appendChild(el('div', 'result-success', '✅ Order completed.'));
       var realId = getRealOrderId(order, orderState);
       if (realId) {
         var printBtn = el('button', 'btn-print', 'Print Invoice');
@@ -1058,7 +1081,9 @@ function renderDetail(root, orders, orderId) {
     var card = el('div', 'card');
     card.appendChild(el('h2', null, order.name + (order.customer_name ? ' — ' + order.customer_name : '')));
     if (order.created_at) card.appendChild(el('div', 'order-time', formatTimestamp(order.created_at)));
-    card.appendChild(el('div', 'result-success', '✅ Order completed'));
+    var completedBanner = el('div', 'result-success', '✅ Order completed');
+    completedBanner.style.marginBottom = '10px';
+    card.appendChild(completedBanner);
 
     // Real order line items (read-only)
     (order.line_items || []).forEach(function (li) {

@@ -17,16 +17,20 @@
 
 **Tag:** `draft-order-tab`
 
+**Shipping address:**
+333 Ellington Blvd Apt 516, Gaithersburg, MD 20878
+Phone: +1 310-597-6930
+
 **Line items:**
 
 | Label | Role | Product ID | Variant ID | Qty | Notes |
 |-------|------|-----------|-----------|-----|-------|
 | A | Per-item weight | `8954966016131` | `47003491696771` | 3 | Per-item mode test |
 | B | Bulk weight | `9190226002051` | `47586084421763` | 17 | Bulk mode test |
-| C | Same-weight | `9190226002051` | `47586084421763` | 3 | Same Weight mode + qty reduction (same product as B) |
-| D | Unit — Found | `8714649174147` | *(default)* | 2 | Found + price-only update |
+| C | Same-weight | `8954965000323` | `46639991685251` | 3 | Same Weight mode + qty reduction |
+| D | Unit — Found | `8714649174147` | `45685623849091` | 2 | Found + price-only update |
 | E | Unit — Partial | `8714607886467` | `45685553528963` | 3 | Partial + cost-only update |
-| F | Unit — Remove | `8714608181379` | *(default)* | 4 | Remove test |
+| F | Unit — Remove | `8714608181379` | `45685555626115` | 4 | Remove test |
 
 To recreate via Shopify MCP:
 ```
@@ -59,8 +63,8 @@ Note the current cost and price for items A, C, and D before testing.
 9. [ ] `← Back` button is shown at the top
 10. [ ] Tap `← Back` — returns to the list view with stats intact
 11. [ ] Tap a Completed (sourced) order card — read-only detail view opens: `✅ Order completed`, real order name, line items with qty/price/properties, `[Print Invoice]`
-12. [ ] Tap `← Back` — returns to the list view
-13. [ ] Refresh the page while in detail view — stays on the same order (URL hash preserved)
+12. [ ] Refresh the page while in detail view — stays on the same order (URL hash preserved)
+13. [ ] Tap `← Back` — returns to the list view
 
 ---
 
@@ -107,7 +111,7 @@ Note the current cost and price for items A, C, and D before testing.
 37. [ ] Select `Same Weight` radio — shows `Weight per item (lb)` and `Quantity found`
 38. [ ] `Quantity found` pre-filled with original qty
 39. [ ] Enter a weight per item (e.g. `40`) and reduce quantity (e.g. from 3 to 2)
-40. [ ] `[Confirm Weight]` — closes, `Weight: 40 lb × 2` in green (collapsed display)
+40. [ ] `[Confirm Weight]` — closes, `Weight: 40 lb` in green; `Qty: 2 (of 3)` in green below it
 
 ---
 
@@ -149,70 +153,71 @@ Note the current cost and price for items A, C, and D before testing.
 
 ### 11. Reset behaviour
 
-57. [ ] `[Reset]` on D — `[Found It]` `[Partial]` `[Remove]` buttons reappear
-58. [ ] Re-mark D as `[Found It]`
+57. [ ] Update cost and price for item B — `[Complete Order]` becomes **enabled**
+58. [ ] `[Reset]` on D — `[Found It]` `[Partial]` `[Remove]` buttons reappear; `[Complete Order]` becomes **disabled**
+59. [ ] Re-mark D as `[Found It]` — `[Complete Order]` becomes **enabled** again
 
 ---
 
 ### 12. Order summary and Complete
 
-59. [ ] Order summary reflects correct totals (weight items use `totalWeight × pricePerLb`, removed items excluded)
-60. [ ] Complete button is **enabled**
-61. [ ] `[Complete Order]` — `⏳ Updating… please wait` shown
-62. [ ] Success banner: `✅ All N items updated successfully.`
-63. [ ] `[Print Invoice]` button appears in the detail view
+60. [ ] Order summary reflects correct totals (weight items use `totalWeight × pricePerLb`, removed items excluded)
+61. [ ] Complete button is **enabled**
+62. [ ] `[Complete Order]` — `⏳ Updating… please wait` shown
+63. [ ] Success banner: `✅ All N items updated successfully.`
+64. [ ] `[Print Invoice]` button appears in the detail view
 
 ---
 
 ### 13. Backend verification
 
-64. [ ] Shopify Admin → Orders — new order exists tagged `sourced`
-65. [ ] Weight items: correct price, `Weight (lb)` and `Price Breakdown` properties, linked to original variant
-66. [ ] Unit items: correct price/qty/cost updates
-67. [ ] Removed item: absent from the order
+65. [ ] Shopify Admin → Orders — new order exists tagged `sourced`
+66. [ ] Weight items: correct price, `Weight (lb)` and `Price Breakdown` properties, linked to original variant
+67. [ ] Unit items: correct price/qty/cost updates
+68. [ ] Removed item: absent from the order
 
 ---
 
 ### 14. Print Invoice — from detail view
 
-68. [ ] `[Print Invoice]` in detail view — `/invoice/{orderId}` opens in new tab
-69. [ ] Invoice renders correctly with order details and line items
-70. [ ] Weight items show `Weight (lb)` and `Price Breakdown` properties
+69. [ ] `[Print Invoice]` in detail view — `/invoice/{orderId}` opens in new tab
+70. [ ] Invoice renders correctly with order details and line items
+71. [ ] Weight items show `Weight (lb)` and `Price Breakdown` properties
 
 ---
 
 ### 15. Homepage after completion
 
-71. [ ] Tap `← Back` — list view shows the just-completed order with green `Completed` badge
-72. [ ] `Completed: N` stat incremented; `Incomplete: N` decremented
-73. [ ] `🖨 Print Invoice` visible on the list card
-74. [ ] Tap `🖨 Print Invoice` — invoice opens; badge changes to `Printed`
-75. [ ] Refresh — order still shows `Printed` badge
+72. [ ] Tap `← Back` — list view shows the just-completed order with green `Completed` badge
+73. [ ] `Completed: N` stat incremented; `Incomplete: N` decremented
+74. [ ] `🖨 Print Invoice` visible on the list card
+75. [ ] Tap `🖨 Print Invoice` — invoice opens; badge changes to `Printed`
+76. [ ] Refresh — order still shows `Printed` badge
 
 ---
 
 ### 16. Completed order detail view (sourced order)
 
-76. [ ] Tap a Completed order card — detail view shows real Shopify order name (e.g. `#1234`)
-77. [ ] Customer name, timestamp, and line items shown (read-only: title, qty, price, Weight/Breakdown properties)
-78. [ ] `[Print Invoice]` button present
+77. [ ] Tap a Completed order card — detail view shows real Shopify order name (e.g. `#1234`)
+78. [ ] Customer name, timestamp, and line items shown (read-only: title, qty, price, Weight/Breakdown properties)
+79. [ ] `[Print Invoice]` button present
 
 ---
 
 ### 17. Clear — multi-selection
 
-79. [ ] `[Clear]` button visible in the list header (top-right)
-80. [ ] Tap `[Clear]` — each card gains a checkbox; `Select all` checkbox appears at top; `[Clear Selected]` and `[Cancel]` buttons appear at bottom
-81. [ ] Tapping a card toggles its checkbox (no navigation)
-82. [ ] `[Clear Selected]` is disabled (greyed) when nothing is selected
-83. [ ] Select one Incomplete draft order — button reads `Clear Selected (1)`
-84. [ ] Select one Completed sourced order as well — button reads `Clear Selected (2)`
-85. [ ] `[Clear Selected (2)]` — request sent; on success list refreshes
-86. [ ] Cleared draft order no longer appears (lost `draft-order-tab` tag in Shopify)
-87. [ ] Cleared sourced order no longer appears (gained `delivered` tag in Shopify)
-88. [ ] Verify in Shopify Admin: draft order no longer has `draft-order-tab` tag; real order now has `delivered` tag
-89. [ ] `[Cancel]` exits selection mode without changes
-90. [ ] `Select all` checkbox selects all visible orders at once
+80. [ ] `[Clear]` button visible in the list header (top-right)
+81. [ ] Tap `[Clear]` — each card gains a checkbox; `Select all` checkbox appears at top; `[Clear Selected]` and `[Cancel]` buttons appear at bottom
+82. [ ] Tapping a card toggles its checkbox (no navigation)
+83. [ ] `[Clear Selected]` is disabled (greyed) when nothing is selected
+84. [ ] `Select all` checkbox selects all visible orders at once
+85. [ ] `[Cancel]` exits selection mode without changes
+86. [ ] Select one Incomplete draft order — button reads `Clear Selected (1)`
+87. [ ] Select one Completed sourced order as well — button reads `Clear Selected (2)`
+88. [ ] `[Clear Selected (2)]` — request sent; on success list refreshes
+89. [ ] Cleared draft order no longer appears (lost `draft-order-tab` tag in Shopify)
+90. [ ] Cleared sourced order no longer appears (gained `delivered` tag in Shopify)
+91. [ ] Verify in Shopify Admin: draft order no longer has `draft-order-tab` tag; real order now has `delivered` tag
 
 ---
 
