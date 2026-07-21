@@ -127,13 +127,15 @@ export function applyLineItemUpdate(lineItem, update) {
       const weights = (update.weights || []).map(Number);
       const totalWeight = weights.reduce((sum, w) => sum + w, 0);
       const unitPrice = Number(lineItem.price);
+      const totalPrice = (totalWeight * unitPrice).toFixed(2);
       return {
         ...lineItem,
         quantity: 1,
-        price: (totalWeight * unitPrice).toFixed(2),
+        price: totalPrice,
         properties: [
           ...(lineItem.properties || []),
           { name: 'Weight (lb)', value: weights.join(', ') },
+          { name: 'Price Breakdown', value: `$${unitPrice.toFixed(2)}/lb × ${totalWeight} lb = $${totalPrice}` },
         ],
       };
     }

@@ -181,6 +181,7 @@ describe('PUT /pickup/update', () => {
     expect(li.quantity).toBe(1);
     expect(li.price).toBe('5.00'); // (1.2+0.8) * 2.50
     expect(li.properties).toContainEqual({ name: 'Weight (lb)', value: '1.2, 0.8' });
+    expect(li.properties).toContainEqual({ name: 'Price Breakdown', value: '$2.50/lb × 2 lb = $5.00' });
   });
 
   it('fetch-then-merge preserves untouched line items', async () => {
