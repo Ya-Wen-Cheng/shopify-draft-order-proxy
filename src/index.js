@@ -162,7 +162,8 @@ export default {
     if (url.pathname === '/pickup/clear' && request.method === 'PUT') {
       try {
         const body = await request.json();
-        const result = await clearOrders(restBase, token, body.items || []);
+        if (!Array.isArray(body.items)) return json({ error: 'items required' }, 400);
+        const result = await clearOrders(restBase, token, body.items);
         return json(result);
       } catch (err) {
         return json({ error: err.message }, 500);

@@ -131,6 +131,81 @@ describe('GET /pickup/data', () => {
     expect(res.status).toBe(500);
   });
 
+  it('fetches sourced orders via /orders.json?tag=sourced', async () => {
+    mockFetch();
+    await call(new Request('http://example.com/pickup/data'));
+    const sourcedCall = globalThis.fetch.mock.calls.find(([u]) => u.includes('/orders.json'));
+    expect(sourcedCall).toBeDefined();
+    expect(sourcedCall[0]).toContain('tag=sourced');
+  });
+
+  it('includes sourced orders in response with status=sourced', async () => {
+    globalThis.fetch.mockImplementation((url) => {
+      if (url.includes('/graphql.json')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: { nodes: [] } }), { status: 200 }));
+      }
+      if (url.includes('/orders.json')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          orders: [{
+            id: 9001, name: '#1001', tags: 'sourced',
+            created_at: '2026-07-15T12:00:00Z',
+            shipping_address: { first_name: 'Jane', last_name: 'Doe' },
+            line_items: [{ id: 301, title: 'Salmon', variant_title: null, quantity: 2, price: '20.00', properties: [] }],
+          }],
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify(draftOrdersResponse), { status: 200 }));
+    });
+
+    const res = await call(new Request('http://example.com/pickup/data'));
+    const data = await res.json();
+    const sourced = data.draft_orders.find(o => o.id === 9001);
+    expect(sourced).toBeDefined();
+    expect(sourced.status).toBe('sourced');
+    expect(sourced.customer_name).toBe('Jane Doe');
+    expect(sourced.line_items[0].title).toBe('Salmon');
+  });
+
+  it('excludes sourced orders tagged delivered', async () => {
+    globalThis.fetch.mockImplementation((url) => {
+      if (url.includes('/graphql.json')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: { nodes: [] } }), { status: 200 }));
+      }
+      if (url.includes('/orders.json')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          orders: [
+            { id: 9001, name: '#1001', tags: 'sourced', created_at: '2026-07-15T12:00:00Z', shipping_address: null, customer: { first_name: 'Jane', last_name: 'Doe' }, line_items: [] },
+            { id: 9002, name: '#1002', tags: 'sourced, delivered', created_at: '2026-07-14T12:00:00Z', shipping_address: null, customer: null, line_items: [] },
+          ],
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ draft_orders: [] }), { status: 200 }));
+    });
+
+    const res = await call(new Request('http://example.com/pickup/data'));
+    const data = await res.json();
+    expect(data.draft_orders.find(o => o.id === 9001)).toBeDefined();
+    expect(data.draft_orders.find(o => o.id === 9002)).toBeUndefined();
+  });
+
+  it('falls back to customer record for name when shipping_address absent', async () => {
+    globalThis.fetch.mockImplementation((url) => {
+      if (url.includes('/graphql.json')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: { nodes: [] } }), { status: 200 }));
+      }
+      if (url.includes('/orders.json')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          orders: [{ id: 9001, name: '#1001', tags: 'sourced', created_at: '2026-07-15T12:00:00Z', shipping_address: null, customer: { first_name: 'Sam', last_name: 'Park' }, line_items: [] }],
+        }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ draft_orders: [] }), { status: 200 }));
+    });
+
+    const res = await call(new Request('http://example.com/pickup/data'));
+    const data = await res.json();
+    expect(data.draft_orders[0].customer_name).toBe('Sam Park');
+  });
+
   it('enriches line items with cost, inventory_item_id, variant_id, product_id and order with created_at', async () => {
     mockFetch();
     const res = await call(new Request('http://example.com/pickup/data'));
@@ -648,6 +723,108 @@ describe('PUT /pickup/complete — batched changes', () => {
     expect(r102.success).toBe(false);
     const completeCall = globalThis.fetch.mock.calls.find(([u]) => u.includes('/complete.json'));
     expect(completeCall).toBeUndefined();
+  });
+});
+
+// ── PUT /pickup/clear ────────────────────────────────────────────────────────
+
+describe('PUT /pickup/clear', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
+
+  it('removes draft-order-tab tag from a draft order', async () => {
+    globalThis.fetch.mockImplementation((url, opts) => {
+      if (url.includes('/draft_orders/1.json') && !opts?.method) {
+        return Promise.resolve(new Response(JSON.stringify({ draft_order: { id: 1, tags: 'draft-order-tab, priced' } }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ draft_order: { id: 1 } }), { status: 200 }));
+    });
+
+    const res = await call(put('/pickup/clear', { items: [{ type: 'draft_order', id: 1 }] }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(true);
+    expect(data.results[0]).toMatchObject({ id: 1, type: 'draft_order', success: true });
+
+    const putCall = globalThis.fetch.mock.calls.find(([u, o]) => u.includes('/draft_orders/1.json') && o?.method === 'PUT');
+    expect(putCall).toBeDefined();
+    const body = JSON.parse(putCall[1].body);
+    expect(body.draft_order.tags).not.toContain('draft-order-tab');
+    expect(body.draft_order.tags).toContain('priced');
+  });
+
+  it('adds delivered tag to a sourced order', async () => {
+    globalThis.fetch.mockImplementation((url, opts) => {
+      if (url.includes('/orders/9001.json') && !opts?.method) {
+        return Promise.resolve(new Response(JSON.stringify({ order: { id: 9001, tags: 'sourced' } }), { status: 200 }));
+      }
+      return Promise.resolve(new Response(JSON.stringify({ order: { id: 9001 } }), { status: 200 }));
+    });
+
+    const res = await call(put('/pickup/clear', { items: [{ type: 'order', id: 9001 }] }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(true);
+    expect(data.results[0]).toMatchObject({ id: 9001, type: 'order', success: true });
+
+    const putCall = globalThis.fetch.mock.calls.find(([u, o]) => u.includes('/orders/9001.json') && o?.method === 'PUT');
+    expect(putCall).toBeDefined();
+    const body = JSON.parse(putCall[1].body);
+    expect(body.order.tags).toContain('delivered');
+    expect(body.order.tags).toContain('sourced');
+  });
+
+  it('does not duplicate delivered tag if already present', async () => {
+    globalThis.fetch.mockImplementation((url) => {
+      if (url.includes('/orders/9001.json')) {
+        return Promise.resolve(new Response(JSON.stringify({ order: { id: 9001, tags: 'sourced, delivered' } }), { status: 200 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    const res = await call(put('/pickup/clear', { items: [{ type: 'order', id: 9001 }] }));
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(true);
+    const putCall = globalThis.fetch.mock.calls.find(([u, o]) => u.includes('/orders/9001.json') && o?.method === 'PUT');
+    expect(putCall).toBeUndefined();
+  });
+
+  it('handles mixed batch: draft order + sourced order', async () => {
+    globalThis.fetch.mockImplementation((url, opts) => {
+      if (url.includes('/draft_orders/1.json') && !opts?.method) {
+        return Promise.resolve(new Response(JSON.stringify({ draft_order: { id: 1, tags: 'draft-order-tab' } }), { status: 200 }));
+      }
+      if (url.includes('/orders/9001.json') && !opts?.method) {
+        return Promise.resolve(new Response(JSON.stringify({ order: { id: 9001, tags: 'sourced' } }), { status: 200 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    const res = await call(put('/pickup/clear', {
+      items: [{ type: 'draft_order', id: 1 }, { type: 'order', id: 9001 }],
+    }));
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(true);
+    expect(data.results).toHaveLength(2);
+  });
+
+  it('returns failure result when Shopify returns error', async () => {
+    globalThis.fetch.mockImplementation((url) => {
+      if (url.includes('/draft_orders/1.json')) {
+        return Promise.resolve(new Response(JSON.stringify({ errors: 'Not Found' }), { status: 404 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    });
+
+    const res = await call(put('/pickup/clear', { items: [{ type: 'draft_order', id: 1 }] }));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(false);
+    expect(data.results[0]).toMatchObject({ id: 1, type: 'draft_order', success: false });
+  });
+
+  it('returns 400 when items missing', async () => {
+    const res = await call(put('/pickup/clear', {}));
+    expect(res.status).toBe(400);
   });
 });
 
