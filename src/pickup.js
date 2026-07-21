@@ -126,7 +126,7 @@ export function applyLineItemUpdate(lineItem, update) {
     case 'weight': {
       const weights = (update.weights || []).map(Number);
       const totalWeight = weights.reduce((sum, w) => sum + w, 0);
-      const unitPrice = Number(update.unit_price ?? lineItem.price);
+      const unitPrice = Number(lineItem.price);
       return {
         ...lineItem,
         quantity: 1,
@@ -263,9 +263,14 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
   }
 
   // ── Step 3: Single fetch-then-merge for all line-item-level changes ────────
-  // Includes: weight/partial/remove/found changes, plus cost_price items where priceChanged
+  // Includes: weight/partial/remove/found changes, plus cost_price items where priceChanged.
+  // Weight items handle their own price via originalUnitPrice in the GraphQL mutation,
+  // so exclude them from priceChanges to avoid a Map key collision.
   const failedIds = new Set(results.filter(r => !r.success).map(r => r.line_item_id));
-  const priceChanges = costPriceChanges.filter(c => c.priceChanged && !failedIds.has(c.line_item_id));
+  const weightLineItemIds = new Set(lineItemChanges.filter(c => c.type === 'weight').map(c => c.line_item_id));
+  const priceChanges = costPriceChanges.filter(
+    c => c.priceChanged && !failedIds.has(c.line_item_id) && !weightLineItemIds.has(c.line_item_id)
+  );
   const allLineItemChanges = [...lineItemChanges, ...priceChanges];
 
   if (allLineItemChanges.length > 0) {
@@ -276,11 +281,8 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
       const getData = await getRes.json();
 
       if (!getRes.ok) {
-        // Mark all pending line-item changes as failed
         for (const change of allLineItemChanges) {
-          // Don't double-add entries for items that already have a failed cost entry
-          const alreadyFailed = failedIds.has(change.line_item_id);
-          if (!alreadyFailed) {
+          if (!failedIds.has(change.line_item_id)) {
             results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: JSON.stringify(getData.errors) });
           }
         }
@@ -292,38 +294,63 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
           .map(li => {
             const update = updatesById.get(String(li.id));
             if (!update) return li;
-
-            // Apply standard line-item update (weight/partial/remove/found)
             let merged = applyLineItemUpdate(li, update);
-
-            // For cost_price items where priceChanged: override the price field
             if (update.type === 'cost_price' && update.priceChanged && merged !== null) {
               merged = { ...merged, price: String(update.price) };
             }
-
             return merged;
           })
           .filter(Boolean);
 
-        const putRes = await fetch(`${restBase}/draft_orders/${draftOrderId}.json`, {
-          method: 'PUT',
-          headers: shopifyHeaders(token),
-          body: JSON.stringify({ draft_order: { id: Number(draftOrderId), line_items: mergedLineItems } }),
+        // ── Use GraphQL draftOrderUpdate so price overrides are respected ────────
+        // REST API silently ignores price on variant line items.
+        // For variant items: use priceOverride (originalUnitPrice is ignored when variantId is set).
+        // For custom items (no variantId): use originalUnitPrice.
+        const gqlLineItems = mergedLineItems.map(li => {
+          const input = {
+            quantity: li.quantity,
+            customAttributes: (li.properties || []).map(p => ({ key: p.name, value: p.value })),
+          };
+          if (li.variant_id) {
+            input.variantId = `gid://shopify/ProductVariant/${li.variant_id}`;
+            input.priceOverride = { amount: String(li.price), currencyCode: 'USD' };
+          } else {
+            input.title = li.title;
+            input.requiresShipping = li.requires_shipping ?? true;
+            input.originalUnitPrice = String(li.price);
+          }
+          return input;
         });
-        const putData = await putRes.json();
 
-        if (!putRes.ok) {
+        const gqlRes = await fetch(`${restBase}/graphql.json`, {
+          method: 'POST',
+          headers: shopifyHeaders(token),
+          body: JSON.stringify({
+            query: `mutation DraftOrderUpdate($id: ID!, $input: DraftOrderInput!) {
+              draftOrderUpdate(id: $id, input: $input) {
+                draftOrder { id }
+                userErrors { field message }
+              }
+            }`,
+            variables: {
+              id: `gid://shopify/DraftOrder/${draftOrderId}`,
+              input: { lineItems: gqlLineItems },
+            },
+          }),
+        });
+        const gqlData = await gqlRes.json();
+        const userErrors = gqlData?.data?.draftOrderUpdate?.userErrors;
+
+        if (!gqlRes.ok || (userErrors && userErrors.length > 0)) {
+          const errMsg = userErrors?.map(e => e.message).join('; ') || JSON.stringify(gqlData.errors);
           for (const change of allLineItemChanges) {
-            const alreadyFailed = failedIds.has(change.line_item_id);
-            if (!alreadyFailed) {
-              results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: JSON.stringify(putData.errors) });
+            if (!failedIds.has(change.line_item_id)) {
+              results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: errMsg });
             }
           }
         } else {
-          // Mark all line-item changes as succeeded (unless already marked failed from cost step)
           for (const change of allLineItemChanges) {
-            const alreadyFailed = failedIds.has(change.line_item_id);
-            if (!alreadyFailed) {
+            if (!failedIds.has(change.line_item_id)) {
               results.push({ line_item_id: change.line_item_id, title: change.title, success: true });
             }
           }
@@ -331,8 +358,7 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
       }
     } catch (err) {
       for (const change of allLineItemChanges) {
-        const alreadyFailed = failedIds.has(change.line_item_id);
-        if (!alreadyFailed) {
+        if (!failedIds.has(change.line_item_id)) {
           results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: err.message });
         }
       }

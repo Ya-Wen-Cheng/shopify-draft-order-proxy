@@ -289,8 +289,8 @@ describe('PUT /pickup/complete — batched changes', () => {
     draft_order: {
       id: 1,
       line_items: [
-        { id: 101, title: 'Roma Tomatoes', quantity: 1, price: '5.00', properties: [] },
-        { id: 102, title: 'Chicken Breast', quantity: 2, price: '12.00', properties: [] },
+        { id: 101, title: 'Roma Tomatoes', quantity: 1, price: '5.00', variant_id: 1001, properties: [] },
+        { id: 102, title: 'Chicken Breast', quantity: 2, price: '12.00', variant_id: 1002, properties: [] },
       ],
     },
   };
@@ -301,6 +301,9 @@ describe('PUT /pickup/complete — batched changes', () => {
 
       if (url.includes('/graphql.json') && body.query?.includes('metafieldsSet')) {
         return new Response(JSON.stringify({ data: { metafieldsSet: { metafields: [{ id: 'mf1', key: 'cost_change_source' }], userErrors: [] } } }), { status: 200 });
+      }
+      if (url.includes('/graphql.json') && body.query?.includes('DraftOrderUpdate')) {
+        return new Response(JSON.stringify({ data: { draftOrderUpdate: { draftOrder: { id: 'gid://shopify/DraftOrder/1' }, userErrors: [] } } }), { status: 200 });
       }
       if (url.includes('/graphql.json')) {
         return new Response(JSON.stringify({ data: { draftOrder: { order: { id: 'gid://shopify/Order/9001', legacyResourceId: '9001' } } } }), { status: 200 });
@@ -370,14 +373,14 @@ describe('PUT /pickup/complete — batched changes', () => {
     const invBody = JSON.parse(inventoryCall[1].body);
     expect(invBody.inventory_item.cost).toBe('3.50');
 
-    // price was merged into draft order line items
-    const draftPutCall = globalThis.fetch.mock.calls.find(([u, o]) =>
-      u.includes('/draft_orders/1.json') && o?.method === 'PUT'
+    // price was merged via GraphQL draftOrderUpdate
+    const draftUpdateCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/graphql.json') && JSON.parse(o.body).query?.includes('DraftOrderUpdate')
     );
-    expect(draftPutCall).toBeDefined();
-    const draftBody = JSON.parse(draftPutCall[1].body);
-    const li = draftBody.draft_order.line_items.find(i => i.id === 101);
-    expect(li.price).toBe('6.00');
+    expect(draftUpdateCall).toBeDefined();
+    const updateVars = JSON.parse(draftUpdateCall[1].body).variables;
+    const li = updateVars.input.lineItems.find(i => i.variantId === 'gid://shopify/ProductVariant/1001');
+    expect(li.priceOverride).toEqual({ amount: '6.00', currencyCode: 'USD' });
   });
 
   it('cost-only change: sets metafield and inventory item, skips line item merge', async () => {
@@ -450,13 +453,14 @@ describe('PUT /pickup/complete — batched changes', () => {
     );
     expect(inventoryCall).toBeUndefined();
 
-    // price merged
-    const draftPutCall = globalThis.fetch.mock.calls.find(([u, o]) =>
-      u.includes('/draft_orders/1.json') && o?.method === 'PUT'
+    // price merged via GraphQL draftOrderUpdate
+    const draftUpdateCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/graphql.json') && JSON.parse(o.body).query?.includes('DraftOrderUpdate')
     );
-    expect(draftPutCall).toBeDefined();
-    const li = JSON.parse(draftPutCall[1].body).draft_order.line_items.find(i => i.id === 101);
-    expect(li.price).toBe('6.00');
+    expect(draftUpdateCall).toBeDefined();
+    const updateVars = JSON.parse(draftUpdateCall[1].body).variables;
+    const li = updateVars.input.lineItems.find(i => i.variantId === 'gid://shopify/ProductVariant/1001');
+    expect(li.priceOverride).toEqual({ amount: '6.00', currencyCode: 'USD' });
   });
 
   it('partial failure: metafield userErrors marks result failed, draft not completed', async () => {

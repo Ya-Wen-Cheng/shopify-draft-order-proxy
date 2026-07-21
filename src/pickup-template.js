@@ -20,7 +20,9 @@ export function renderPickupPage() {
   .order-time { font-size: 12px; color: #888; margin-bottom: 8px; }
   .line-item { border-top: 1px solid #eee; padding: 12px 0; }
   .line-item:first-child { border-top: none; }
-  .line-item.resolved { opacity: 0.6; }
+  .line-item.resolved .li-title,
+  .line-item.resolved .li-stat,
+  .line-item.resolved .confirmed { opacity: 0.6; }
   .li-title { font-size: 15px; font-weight: 500; }
   .li-stat { font-size: 13px; color: #555; margin-top: 2px; }
   .confirmed { color: #16a34a; font-weight: 600; }
@@ -134,19 +136,61 @@ function getItemState(orderId, li) {
   return order.items[li.id];
 }
 
+function isFullyResolved(itemState) {
+  if (!itemState.resolved) return false;
+  // cost must be known — either already on record or entered by driver
+  return itemState.currentCost !== null || itemState.newCost !== null;
+}
+
 function allResolved(orderId) {
   var items = state[orderId].items;
   var ids = Object.keys(items);
   if (ids.length === 0) return false;
   for (var id in items) {
-    if (!items[id].resolved) return false;
+    if (!isFullyResolved(items[id])) return false;
   }
   return true;
+}
+
+// ─── localStorage persistence ──────────────────────────────────────────────
+
+var STORAGE_KEY = 'pickup_state';
+
+function saveStateToStorage() {
+  var toSave = {};
+  for (var orderId in state) {
+    if (state[orderId].completed) continue; // clear completed orders
+    var savedItems = {};
+    for (var itemId in state[orderId].items) {
+      var item = state[orderId].items[itemId];
+      savedItems[itemId] = {
+        resolved: item.resolved,
+        resolvedType: item.resolvedType,
+        resolvedQuantity: item.resolvedQuantity,
+        bulk: item.bulk,
+        weights: item.weights,
+        confirmedWeights: item.confirmedWeights,
+        costPriceConfirmed: item.costPriceConfirmed,
+        newCost: item.newCost,
+        newPrice: item.newPrice,
+      };
+    }
+    toSave[orderId] = { items: savedItems };
+  }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave)); } catch (e) {}
+}
+
+function loadStateFromStorage() {
+  try {
+    var saved = localStorage.getItem(STORAGE_KEY);
+    return saved ? JSON.parse(saved) : {};
+  } catch (e) { return {}; }
 }
 
 // ─── data loading ──────────────────────────────────────────────────────────
 
 async function loadData() {
+  var saved = loadStateFromStorage();
   var res = await fetch('/pickup/data');
   var data = await res.json();
   var orders = data.draft_orders || [];
@@ -163,7 +207,22 @@ async function loadData() {
     } else {
       state[order.id].order = order;
     }
-    order.line_items.forEach(function (li) { getItemState(order.id, li); });
+    var savedOrder = saved[order.id] || {};
+    order.line_items.forEach(function (li) {
+      var itemState = getItemState(order.id, li);
+      var savedItem = savedOrder.items && savedOrder.items[li.id];
+      if (savedItem) {
+        itemState.resolved = savedItem.resolved || false;
+        itemState.resolvedType = savedItem.resolvedType || null;
+        itemState.resolvedQuantity = savedItem.resolvedQuantity !== undefined ? savedItem.resolvedQuantity : null;
+        itemState.bulk = savedItem.bulk || false;
+        itemState.weights = savedItem.weights || [''];
+        itemState.confirmedWeights = savedItem.confirmedWeights || null;
+        itemState.costPriceConfirmed = savedItem.costPriceConfirmed || false;
+        itemState.newCost = savedItem.newCost !== undefined ? savedItem.newCost : null;
+        itemState.newPrice = savedItem.newPrice !== undefined ? savedItem.newPrice : null;
+      }
+    });
   });
   render(orders);
 }
@@ -208,6 +267,7 @@ function confirmCostPrice(orderId, li, itemState, newCost, newPrice) {
 function rerender() {
   var orders = Object.keys(state).map(function (id) { return state[id].order; });
   render(orders);
+  saveStateToStorage();
 }
 
 // ─── complete order (batched) ───────────────────────────────────────────────
@@ -243,7 +303,7 @@ async function completeOrder(order) {
       var change = { line_item_id: Number(id), title: li.title, type: item.resolvedType };
       if (item.resolvedType === 'weight') {
         change.weights = item.confirmedWeights;
-        change.unit_price = item.currentPrice;
+        change.unit_price = item.newPrice !== null ? item.newPrice : item.currentPrice;
       }
       if (item.resolvedType === 'partial') {
         change.quantity = item.resolvedQuantity;
@@ -279,6 +339,9 @@ async function completeOrder(order) {
 
 function buildWeightPanel(orderId, li, itemState) {
   var panel = el('div', 'panel');
+
+  var unitPrice = itemState.newPrice !== null ? itemState.newPrice : parseFloat(li.price || 0);
+  panel.appendChild(el('div', 'suggestions', 'Price per unit: ' + fmtMoney(unitPrice) + ' — total = weight × this price'));
 
   var toggle = el('div', 'toggle');
   toggle.innerHTML =
@@ -453,11 +516,12 @@ function render(orders) {
     // ── line items ──
     order.line_items.forEach(function (li) {
       var itemState = getItemState(order.id, li);
-      var row = el('div', 'line-item' + (itemState.resolved ? ' resolved' : ''));
+      var row = el('div', 'line-item' + (isFullyResolved(itemState) ? ' resolved' : ''));
 
       // title
       row.appendChild(el('div', 'li-title',
-        li.title + (li.variant_title ? ' (' + li.variant_title + ')' : '') + ' — qty: ' + li.quantity));
+        li.title + (li.variant_title ? ' (' + li.variant_title + ')' : '')));
+      row.appendChild(el('div', 'li-stat', 'Qty: ' + li.quantity));
 
       // confirmed weights (green)
       if (itemState.confirmedWeights) {
@@ -472,10 +536,15 @@ function render(orders) {
       var costClass = priceClass;
       var marginClass = priceClass;
 
+      if (effectiveCost !== null && !isNaN(effectiveCost)) {
+        row.appendChild(el('div', costClass, 'Cost:   ' + fmtMoney(effectiveCost)));
+      } else {
+        row.appendChild(el('div', 'li-stat', 'Cost:   N/A'));
+      }
+
       row.appendChild(el('div', priceClass, 'Price:  ' + fmtMoney(effectivePrice)));
 
       if (effectiveCost !== null && !isNaN(effectiveCost)) {
-        row.appendChild(el('div', costClass, 'Cost:   ' + fmtMoney(effectiveCost)));
         var m = calcMarginPct(effectivePrice, effectiveCost);
         if (m !== null) {
           row.appendChild(el('div', marginClass, 'Margin: ' + m.toFixed(1) + '%'));
