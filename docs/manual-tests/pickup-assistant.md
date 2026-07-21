@@ -34,7 +34,7 @@ Note the current cost and price for items A, C, and D before testing.
 3. [ ] Timestamp is shown below the order name
 4. [ ] Items A and B show `[Update Cost & Price]` and `[Update Weight]` buttons — no Found/Partial/Removed
 5. [ ] Items C, D, and E show `[Update Cost & Price]` and `[Found It]` `[Partial]` `[Removed]` buttons — no Update Weight
-6. [ ] Item B shows `Cost: N/A` (no cost recorded)
+6. [ ] Item B shows `Cost: N/A` and `Margin: N/A` (no cost recorded)
 7. [ ] Order summary shows `Cost: N/A` (because item B has no cost)
 8. [ ] Complete button is **disabled**
 
@@ -45,74 +45,88 @@ Note the current cost and price for items A, C, and D before testing.
 9. [ ] Click `[Update Cost & Price]` on item A — cost/price panel expands inline
 10. [ ] Enter a cost value — suggested prices at 25/20/15% margin update live below the cost field
 11. [ ] Enter a price value — click `[Calculate Margin]` — margin percentage shown
-12. [ ] Click `[Confirm]` — panel closes, price/cost/margin display turns green with new values
+12. [ ] Click `[Confirm]` — panel closes, **Cost and Price both turn green** (both were changed); Margin also green
 13. [ ] Click `[Update Weight]` on item A — weight panel expands
-14. [ ] Verify Per-Item mode is selected by default, with 2 inputs (one per qty)
-15. [ ] Enter a weight in each input (e.g. `2.5` and `3.0`)
-16. [ ] Click `[Confirm Weight]` — panel closes, `Weight: 2.5, 3.0 lb` shown in green, item dims
+14. [ ] Price per unit hint shows the price just confirmed (not the original catalog price)
+15. [ ] Verify Per-Item mode is selected by default, with 2 inputs (one per qty)
+16. [ ] Enter a weight in each input (e.g. `2.5` and `3.0`)
+17. [ ] Click `[Confirm Weight]` — panel closes, `Weight: 2.5, 3.0 lb` shown in green
 
 ---
 
 ### 3. Item B — weight item, bulk mode, no cost/price update
 
-17. [ ] Click `[Update Weight]` on item B — weight panel expands
-18. [ ] Select `Bulk` radio — panel switches to a single `Total lbs` input
-19. [ ] Enter a total weight (e.g. `8.0`)
-20. [ ] Click `[Confirm Weight]` — panel closes, `Weight: 8 lb` shown in green, item dims
+18. [ ] Click `[Update Weight]` on item B — weight panel expands
+19. [ ] Select `Bulk` radio — panel switches to a single `Total lbs` input
+20. [ ] Enter a total weight (e.g. `8.0`)
+21. [ ] Click `[Confirm Weight]` — panel closes, `Weight: 8 lb` shown in green
 
 ---
 
 ### 4. Item C — unit item, Found, price-only update
 
-21. [ ] Click `[Update Cost & Price]` on item C — panel expands
-22. [ ] Leave cost field unchanged, enter a new price only
-23. [ ] Click `[Confirm]` — panel closes, price display updates green, cost unchanged
-24. [ ] Click `[Found It]` — item dims, `✓ found` shown
+22. [ ] Click `[Update Cost & Price]` on item C — panel expands
+23. [ ] Leave cost field unchanged, enter a new price only
+24. [ ] Click `[Confirm]` — panel closes, **Price turns green, Cost does not** (only price changed)
+25. [ ] Click `[Found It]` — `✓ found` shown with a `[Reset]` button
 
 ---
 
 ### 5. Item D — unit item, Partial, cost-only update
 
-25. [ ] Click `[Update Cost & Price]` on item D — panel expands
-26. [ ] Enter a new cost only, leave price field unchanged
-27. [ ] Click `[Confirm]` — panel closes, cost display updates green, price unchanged
-28. [ ] Click `[Partial]` — prompt appears asking for quantity found
-29. [ ] Enter a quantity less than 4 (e.g. `2`) — item dims, quantity shown as updated
+26. [ ] Click `[Update Cost & Price]` on item D — panel expands
+27. [ ] Enter a new cost only, leave price field unchanged
+28. [ ] Click `[Confirm]` — panel closes, **Cost turns green, Price does not** (only cost changed)
+29. [ ] Click `[Partial]` — an inline quantity input appears (no browser prompt)
+30. [ ] Enter a quantity less than 4 (e.g. `2`) and click `[Confirm]`
+31. [ ] `✓ partial` shown with `[Reset]` button; Qty shows `2 (of 4)` in green
 
 ---
 
 ### 6. Item E — unit item, Removed, no update
 
-30. [ ] Click `[Removed]` on item E — item dims, `✓ remove` shown
+32. [ ] Click `[Removed]` on item E — `✓ remove` shown with a `[Reset]` button
+33. [ ] Item E remains visible in the list (not hidden)
 
 ---
 
-### 7. Order summary and Complete
+### 7. Reset behaviour
 
-31. [ ] Order summary now shows updated Cost, Total, and Margin reflecting new cost/price values and the partial qty for item D (item E excluded as removed)
-32. [ ] Complete button is now **enabled**
-33. [ ] Click `[Complete Order]` — progress indicator `⏳ Updating… please wait` shown
-34. [ ] Success banner appears: `✅ All 5 items updated successfully.`
-35. [ ] `[Print Invoice]` button appears
+34. [ ] Click `[Reset]` on item C — `[Found It]` `[Partial]` `[Removed]` buttons reappear, item is unresolved
+35. [ ] Re-mark item C as `[Found It]`
 
 ---
 
-### 8. Backend verification
+### 8. Order summary and Complete
 
-36. [ ] In Shopify Admin → Orders — a new order exists, tagged `sourced`
-37. [ ] Item A: line item price reflects total weight × unit price; `Weight (lb)` property shows `2.5, 3.0`
-38. [ ] Item A: inventory item cost updated to the value entered in step 10; product metafield `custom.cost_change_source` cleared
-39. [ ] Item B: line item price reflects total bulk weight × unit price
-40. [ ] Item C: line item price updated to the new price entered in step 22
-41. [ ] Item D: qty is `2` (partial); inventory item cost updated to the value entered in step 26
-42. [ ] Item E: line item removed from the order
+36. [ ] Order summary shows:
+    - Cost reflects A's new cost × total weight + D's new cost × partial qty (item B N/A makes total N/A if B still unresolved — complete item B first)
+    - Total reflects A's `totalWeight × pricePerLb` + B's `totalWeight × price` + C's new price + D's price × 2 (item E excluded as removed)
+    - Margin shown if cost is known for all items
+37. [ ] Complete button is now **enabled**
+38. [ ] Click `[Complete Order]` — progress indicator `⏳ Updating… please wait` shown
+39. [ ] Success banner appears: `✅ All 5 items updated successfully.`
+40. [ ] `[Print Invoice]` button appears
 
 ---
 
-### 9. Print Invoice
+### 9. Backend verification
 
-43. [ ] Click `[Print Invoice]` — `/invoice/{orderId}` opens in a new tab
-44. [ ] Invoice renders at full 8.5×11 width with correct order details and line items
+41. [ ] In Shopify Admin → Orders — a new order exists, tagged `sourced`
+42. [ ] Item A: line item price = `totalWeight × pricePerLb`; `Weight (lb)` property shows `2.5, 3.0`; `Price Breakdown` property shows the calculation; line item still linked to the original product variant
+43. [ ] Item A: inventory item cost updated to the value entered in step 10
+44. [ ] Item B: line item price = `totalBulkWeight × price`; `Weight (lb)` and `Price Breakdown` properties present
+45. [ ] Item C: line item price updated to the new price entered in step 23
+46. [ ] Item D: qty is `2` (partial); inventory item cost updated to the value entered in step 27
+47. [ ] Item E: line item removed from the order
+
+---
+
+### 10. Print Invoice
+
+48. [ ] Click `[Print Invoice]` — `/invoice/{orderId}` opens in a new tab
+49. [ ] Invoice renders at full 8.5×11 width with correct order details and line items
+50. [ ] Weight items show `Weight (lb)` and `Price Breakdown` properties
 
 ---
 
