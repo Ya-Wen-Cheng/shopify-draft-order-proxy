@@ -58,8 +58,18 @@ export function renderInvoiceHtml(order) {
 </head>
 <body>
   <button class="print-btn no-print" onclick="window.print()">Print</button>
-  <h1>Invoice — ${escapeHtml(order.name)}</h1>
-  <div class="meta">Order date: ${escapeHtml(order.created_at)}</div>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
+    <div>
+      <h1 style="margin:0 0 4px;">Invoice — ${escapeHtml(order.name)}</h1>
+      <div class="meta">Order date: ${escapeHtml(order.created_at)}</div>
+    </div>
+    <div style="text-align:right;font-size:13px;line-height:1.6;">
+      <strong>AIGO L.L.C.</strong><br>
+      info@my-aigo.com<br>
+      240-602-4225<br>
+      <span style="color:#555;">Place order at: www.my-aigo.com</span>
+    </div>
+  </div>
   <p>
     ${escapeHtml(shipping.first_name)} ${escapeHtml(shipping.last_name)}<br>
     ${escapeHtml(shipping.address1)} ${escapeHtml(shipping.address2)}<br>
