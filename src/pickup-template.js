@@ -3,6 +3,10 @@
  * All state (weights, resolved items, cost/price edits, completed orders) lives
  * client-side in memory for the duration of the session — no background polling,
  * no auth. Changes are batched and sent in a single PUT /pickup/complete call.
+ *
+ * Views:
+ *   list   — homepage: date/stats header + one summary card per draft order
+ *   detail — full editing UI for a single open order (or read-only for completed)
  */
 
 export function renderPickupPage() {
@@ -14,7 +18,7 @@ export function renderPickupPage() {
 <title>Pickup Assistant</title>
 <style>
   body { font-family: -apple-system, Arial, sans-serif; margin: 0; padding: 16px; background: #f5f5f5; }
-  h1 { font-size: 18px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
   .card { background: #fff; border-radius: 8px; padding: 16px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.15); }
   .card h2 { margin: 0 0 4px; font-size: 16px; }
   .order-time { font-size: 12px; color: #888; margin-bottom: 8px; }
@@ -48,14 +52,55 @@ export function renderPickupPage() {
   .result-mixed { color: #d97706; margin-top: 8px; font-weight: 600; }
   .result-failed { color: #dc2626; margin-top: 4px; font-weight: 600; }
   .result-contact { color: #dc2626; font-size: 13px; margin-top: 4px; }
+  /* ── list view ── */
+  .list-header { margin-bottom: 14px; }
+  .list-date { font-size: 13px; color: #555; }
+  .list-stats { display: flex; gap: 20px; font-size: 13px; font-weight: 600; margin-top: 4px; }
+  .stat-incomplete { color: #d97706; }
+  .stat-completed { color: #16a34a; }
+  .status-badge { display: inline-block; font-size: 11px; font-weight: 600; border-radius: 4px; padding: 2px 7px; vertical-align: middle; margin-left: 6px; }
+  .badge-incomplete { background: #fef3c7; color: #b45309; }
+  .badge-completed { background: #dcfce7; color: #15803d; }
+  .badge-printed { background: #ede9fe; color: #7c3aed; }
+  .list-card { cursor: pointer; }
+  .list-card:active { opacity: 0.85; }
+  .btn-back { background: #6b7280; color: #fff; margin-bottom: 12px; }
+  .btn-print-list { background: #6b21a8; color: #fff; padding: 8px 14px; font-size: 13px; border: none; border-radius: 6px; cursor: pointer; margin-top: 8px; display: block; width: 100%; }
+  .btn-clear-mode { background: #6b7280; color: #fff; padding: 6px 12px; font-size: 13px; border: none; border-radius: 6px; cursor: pointer; }
+  .btn-clear-confirm { background: #dc2626; color: #fff; padding: 10px 0; font-size: 15px; border: none; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 8px; }
+  .btn-cancel-select { background: #e5e7eb; color: #374151; padding: 10px 0; font-size: 15px; border: none; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 8px; }
+  .select-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+  .card-selected { outline: 2px solid #2563eb; }
+  .card-checkbox { width: 20px; height: 20px; margin-right: 8px; flex-shrink: 0; cursor: pointer; }
+  .card-check-row { display: flex; align-items: flex-start; gap: 8px; }
 </style>
 </head>
 <body>
-  <h1>Pickup Assistant — Draft Orders</h1>
-  <div id="orders">Loading…</div>
+  <div id="app">Loading…</div>
 
 <script>
 var state = {};
+var currentView = 'list';
+var selectedOrderId = null;
+var printedOrders = {};
+var selectionMode = false;
+var selectedForClear = {}; // { orderId: true }
+
+// Restore view from URL hash on load/refresh (e.g. #order-12345)
+(function () {
+  var m = location.hash.match(/^#order-(\d+)$/);
+  if (m) { selectedOrderId = Number(m[1]); currentView = 'detail'; }
+})();
+
+window.addEventListener('popstate', function () {
+  var m = location.hash.match(/^#order-(\d+)$/);
+  if (m) { selectedOrderId = Number(m[1]); currentView = 'detail'; }
+  else   { selectedOrderId = null; currentView = 'list'; }
+  rerender();
+});
+
+var STORAGE_KEY = 'pickup_state';
+var PRINTED_KEY  = 'pickup_printed';
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
@@ -99,6 +144,30 @@ function formatTimestamp(iso) {
   var ampm = hours >= 12 ? 'PM' : 'AM';
   var h12 = hours % 12 || 12;
   return year + '-' + month + '-' + day + ' ' + h12 + ':' + mins + ' ' + ampm;
+}
+
+function formatDate(d) {
+  var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  return days[d.getDay()] + ', ' + months[d.getMonth()] + ' ' + d.getDate() + ', ' + d.getFullYear();
+}
+
+// ─── order status helpers ──────────────────────────────────────────────────
+
+function isOrderCompleted(order, orderState) {
+  return order.status === 'sourced' || !!(orderState && orderState.completed);
+}
+
+function getRealOrderId(order, orderState) {
+  if (order.status === 'sourced') return order.id; // real order IS this order
+  return order.order_id || (orderState && orderState.realOrderId) || null;
+}
+
+function getOrderStatus(order, orderState) {
+  if (!isOrderCompleted(order, orderState)) return 'incomplete';
+  var realId = getRealOrderId(order, orderState);
+  if (realId && printedOrders[order.id]) return 'printed';
+  return 'completed';
 }
 
 // ─── state management ──────────────────────────────────────────────────────
@@ -153,12 +222,11 @@ function allResolved(orderId) {
 
 // ─── localStorage persistence ──────────────────────────────────────────────
 
-var STORAGE_KEY = 'pickup_state';
-
 function saveStateToStorage() {
   var toSave = {};
   for (var orderId in state) {
-    if (state[orderId].completed) continue; // clear completed orders
+    if (state[orderId].completed) continue; // clear in-session completed orders
+    if (state[orderId].order && state[orderId].order.status === 'sourced') continue; // read-only
     var savedItems = {};
     for (var itemId in state[orderId].items) {
       var item = state[orderId].items[itemId];
@@ -188,9 +256,28 @@ function loadStateFromStorage() {
   } catch (e) { return {}; }
 }
 
+function savePrintedOrders() {
+  try { localStorage.setItem(PRINTED_KEY, JSON.stringify(printedOrders)); } catch (e) {}
+}
+
+function loadPrintedOrders() {
+  try {
+    var saved = localStorage.getItem(PRINTED_KEY);
+    return saved ? JSON.parse(saved) : {};
+  } catch (e) { return {}; }
+}
+
+function printInvoice(draftOrderId, realOrderId) {
+  printedOrders[draftOrderId] = true;
+  savePrintedOrders();
+  window.open('/invoice/' + realOrderId, '_blank');
+  rerender();
+}
+
 // ─── data loading ──────────────────────────────────────────────────────────
 
 async function loadData() {
+  printedOrders = loadPrintedOrders();
   var saved = loadStateFromStorage();
   var res = await fetch('/pickup/data');
   var data = await res.json();
@@ -208,6 +295,7 @@ async function loadData() {
     } else {
       state[order.id].order = order;
     }
+    if (order.status === 'sourced') return; // read-only, no item state needed
     var savedOrder = saved[order.id] || {};
     order.line_items.forEach(function (li) {
       var itemState = getItemState(order.id, li);
@@ -268,8 +356,11 @@ function markResolved(orderId, li, itemState, type, quantity) {
 }
 
 function confirmCostPrice(orderId, li, itemState, newCost, newPrice) {
-  itemState.newCost = (newCost !== '' && newCost !== null && !isNaN(parseFloat(newCost))) ? parseFloat(newCost) : null;
-  itemState.newPrice = (newPrice !== '' && newPrice !== null && !isNaN(parseFloat(newPrice))) ? parseFloat(newPrice) : null;
+  var parsedCost  = (newCost  !== '' && newCost  !== null && !isNaN(parseFloat(newCost)))  ? parseFloat(newCost)  : null;
+  var parsedPrice = (newPrice !== '' && newPrice !== null && !isNaN(parseFloat(newPrice))) ? parseFloat(newPrice) : null;
+  // Only treat as changed if the value actually differs from the stored original
+  itemState.newCost  = (parsedCost  !== null && parsedCost  !== parseFloat(itemState.currentCost))  ? parsedCost  : null;
+  itemState.newPrice = (parsedPrice !== null && parsedPrice !== parseFloat(itemState.currentPrice)) ? parsedPrice : null;
   itemState.costPriceConfirmed = itemState.newCost !== null || itemState.newPrice !== null;
   itemState.costPriceExpanded = false;
   rerender();
@@ -564,198 +655,447 @@ function buildOrderSummary(order, orderState) {
   return summary;
 }
 
-// ─── main render ────────────────────────────────────────────────────────────
+// ─── order card (detail view) ──────────────────────────────────────────────
 
-function render(orders) {
-  var root = document.getElementById('orders');
-  root.innerHTML = '';
+function renderOrderCard(container, order, orderState) {
+  var card = el('div', 'card');
+
+  // ── card header ──
+  card.appendChild(el('h2', null, order.name + (order.customer_name ? ' — ' + order.customer_name : '')));
+  if (order.created_at) {
+    card.appendChild(el('div', 'order-time', formatTimestamp(order.created_at)));
+  }
+
+  // ── line items ──
+  order.line_items.forEach(function (li) {
+    var itemState = getItemState(order.id, li);
+    var row = el('div', 'line-item' + (isFullyResolved(itemState) ? ' resolved' : ''));
+
+    // title
+    row.appendChild(el('div', 'li-title',
+      li.title + (li.variant_title ? ' (' + li.variant_title + ')' : '')));
+
+    // qty — green with "X (of Y)" when partial
+    if (itemState.resolvedType === 'partial' && itemState.resolvedQuantity !== null) {
+      row.appendChild(el('div', 'li-stat confirmed', 'Qty: ' + itemState.resolvedQuantity + ' (of ' + li.quantity + ')'));
+    } else {
+      row.appendChild(el('div', 'li-stat', 'Qty: ' + li.quantity));
+    }
+
+    // confirmed weights (green) — collapse "X, X, X lb" to "X lb × N" when uniform
+    if (itemState.confirmedWeights) {
+      var cw = itemState.confirmedWeights;
+      var allSame = cw.length > 1 && cw.every(function (w) { return w === cw[0]; });
+      var weightStr = allSame
+        ? cw[0] + ' lb × ' + cw.length
+        : cw.join(', ') + ' lb';
+      row.appendChild(el('div', 'li-stat confirmed', 'Weight: ' + weightStr));
+    }
+
+    // cost / price / margin — each field turns green only if the driver changed it
+    var effectivePrice = itemState.newPrice !== null ? itemState.newPrice : parseFloat(li.price || 0);
+    var effectiveCost = itemState.newCost !== null ? itemState.newCost : (li.cost !== null && li.cost !== undefined ? parseFloat(li.cost) : null);
+    var costClass  = itemState.newCost  !== null ? 'li-stat confirmed' : 'li-stat';
+    var priceClass = itemState.newPrice !== null ? 'li-stat confirmed' : 'li-stat';
+    var marginClass = (itemState.newCost !== null || itemState.newPrice !== null) ? 'li-stat confirmed' : 'li-stat';
+
+    if (effectiveCost !== null && !isNaN(effectiveCost)) {
+      row.appendChild(el('div', costClass, 'Cost:   ' + fmtMoney(effectiveCost)));
+    } else {
+      row.appendChild(el('div', 'li-stat', 'Cost:   N/A'));
+    }
+
+    row.appendChild(el('div', priceClass, 'Price:  ' + fmtMoney(effectivePrice)));
+
+    if (effectiveCost !== null && !isNaN(effectiveCost)) {
+      var m = calcMarginPct(effectivePrice, effectiveCost);
+      row.appendChild(el('div', marginClass, 'Margin: ' + (m !== null ? m.toFixed(1) + '%' : 'N/A')));
+    } else {
+      row.appendChild(el('div', 'li-stat', 'Margin: N/A'));
+    }
+
+    // ── action buttons ──
+    var btnRow = el('div');
+
+    // "Update Cost & Price" toggle button
+    var cpBtn = el('button', 'btn btn-update-cp', 'Update Cost & Price');
+    cpBtn.addEventListener('click', function () {
+      itemState.costPriceExpanded = !itemState.costPriceExpanded;
+      rerender();
+    });
+    btnRow.appendChild(cpBtn);
+
+    // "Update Weight" toggle button (weight items only); label changes after resolution
+    if (itemState.hasWeight) {
+      var wBtn = el('button', 'btn btn-update-w', itemState.resolved ? 'Re-enter Weight' : 'Update Weight');
+      wBtn.addEventListener('click', function () {
+        itemState.weightExpanded = !itemState.weightExpanded;
+        rerender();
+      });
+      btnRow.appendChild(wBtn);
+    }
+
+    row.appendChild(btnRow);
+
+    // non-weight items: Found / Partial / Removed
+    if (!itemState.hasWeight) {
+      var actionRow = el('div');
+      if (itemState.resolved) {
+        // show status + Reset
+        var statusLabel = '✓ ' + (itemState.resolvedType || 'resolved');
+        actionRow.appendChild(el('span', 'li-stat', statusLabel));
+        var resetBtn = el('button', 'btn btn-reset', 'Reset');
+        resetBtn.style.marginLeft = '8px';
+        resetBtn.addEventListener('click', function () {
+          itemState.resolved = false;
+          itemState.resolvedType = null;
+          itemState.resolvedQuantity = null;
+          itemState.partialExpanded = false;
+          rerender();
+        });
+        actionRow.appendChild(resetBtn);
+      } else if (itemState.partialExpanded) {
+        // inline partial quantity input
+        var partialInput = document.createElement('input');
+        partialInput.type = 'number'; partialInput.min = '1';
+        partialInput.max = String(li.quantity - 1);
+        partialInput.placeholder = 'Qty found';
+        partialInput.style.cssText = 'width:80px;margin-right:6px;';
+        var confirmPartialBtn = el('button', 'btn btn-partial', 'Confirm');
+        confirmPartialBtn.addEventListener('click', function () {
+          var qty = parseInt(partialInput.value, 10);
+          if (isNaN(qty) || qty < 1 || qty >= li.quantity) return;
+          itemState.partialExpanded = false;
+          markResolved(order.id, li, itemState, 'partial', qty);
+        });
+        var cancelPartialBtn = el('button', 'btn btn-reset', 'Cancel');
+        cancelPartialBtn.addEventListener('click', function () {
+          itemState.partialExpanded = false;
+          rerender();
+        });
+        actionRow.appendChild(partialInput);
+        actionRow.appendChild(confirmPartialBtn);
+        actionRow.appendChild(cancelPartialBtn);
+      } else {
+        // unresolved: show Found / Partial / Removed
+        var foundBtn = el('button', 'btn btn-found', 'Found It');
+        foundBtn.addEventListener('click', function () { markResolved(order.id, li, itemState, 'found'); });
+        var partialBtn = el('button', 'btn btn-partial', 'Partial');
+        partialBtn.addEventListener('click', function () {
+          itemState.partialExpanded = true;
+          rerender();
+        });
+        var removeBtn = el('button', 'btn btn-remove', 'Remove');
+        removeBtn.addEventListener('click', function () { markResolved(order.id, li, itemState, 'remove'); });
+        actionRow.appendChild(foundBtn);
+        actionRow.appendChild(partialBtn);
+        actionRow.appendChild(removeBtn);
+      }
+      row.appendChild(actionRow);
+    }
+
+    // ── expanded panels ──
+    if (itemState.costPriceExpanded) {
+      row.appendChild(buildCostPricePanel(order.id, li, itemState));
+    }
+    if (itemState.weightExpanded) {
+      row.appendChild(buildWeightPanel(order.id, li, itemState));
+    }
+
+    card.appendChild(row);
+  });
+
+  // ── order summary ──
+  card.appendChild(buildOrderSummary(order, orderState));
+
+  // ── complete / progress / results ──
+  if (orderState.completing) {
+    card.appendChild(el('div', 'progress', '⏳ Updating… please wait'));
+  } else if (orderState.completed) {
+    var allOk = !orderState.results.some(function (r) { return !r.success; });
+    if (allOk) {
+      card.appendChild(el('div', 'result-success', '✅ All ' + orderState.results.length + ' items updated successfully.'));
+      var realId = getRealOrderId(order, orderState);
+      if (realId) {
+        var printBtn = el('button', 'btn-print', 'Print Invoice');
+        printBtn.addEventListener('click', function () { printInvoice(order.id, realId); });
+        card.appendChild(printBtn);
+      }
+    } else {
+      var succeeded = orderState.results.filter(function (r) { return r.success; }).length;
+      var failed = orderState.results.filter(function (r) { return !r.success; });
+      card.appendChild(el('div', 'result-mixed', '✅ ' + succeeded + '/' + orderState.results.length + ' items updated'));
+      card.appendChild(el('div', 'result-failed', '❌ Failed: ' + failed.map(function (r) { return r.title; }).join(', ')));
+      card.appendChild(el('div', 'result-contact', 'Please contact Technical Staff.'));
+    }
+  } else {
+    var completeBtn = el('button', 'btn-complete',
+      orderState.completed ? 'Completed ✓' : 'Complete Order');
+    completeBtn.disabled = !!orderState.completed || !allResolved(order.id);
+    completeBtn.addEventListener('click', function () { completeOrder(order); });
+    card.appendChild(completeBtn);
+  }
+
+  container.appendChild(card);
+}
+
+// ─── list view (homepage) ──────────────────────────────────────────────────
+
+async function clearSelected(orders) {
+  var ids = Object.keys(selectedForClear).filter(function (id) { return selectedForClear[id]; });
+  if (ids.length === 0) return;
+
+  var items = ids.map(function (id) {
+    var order = orders.find(function (o) { return String(o.id) === String(id); });
+    return { type: order && order.status === 'sourced' ? 'order' : 'draft_order', id: Number(id) };
+  });
+
+  try {
+    var res = await fetch('/pickup/clear', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: items }),
+    });
+    var data = await res.json();
+    if (data.all_succeeded) {
+      selectionMode = false;
+      selectedForClear = {};
+      await loadData(); // refresh list
+    }
+  } catch (err) {
+    alert('Clear failed: ' + err.message);
+  }
+}
+
+function renderList(root, orders) {
+  // Header: date + stats
+  var incompleteCount = 0;
+  var completedCount = 0;
+  orders.forEach(function (o) {
+    var os = state[o.id];
+    if (isOrderCompleted(o, os)) completedCount++; else incompleteCount++;
+  });
+
+  var header = el('div', 'list-header');
+
+  // Title row: heading + Clear button
+  var titleRow = el('div');
+  titleRow.style.display = 'flex';
+  titleRow.style.justifyContent = 'space-between';
+  titleRow.style.alignItems = 'center';
+  titleRow.style.marginBottom = '4px';
+  titleRow.appendChild(el('h1', null, 'Pickup Assistant'));
+  if (!selectionMode && orders.length > 0) {
+    var clearModeBtn = el('button', 'btn-clear-mode', 'Clear');
+    clearModeBtn.addEventListener('click', function () {
+      selectionMode = true;
+      selectedForClear = {};
+      rerender();
+    });
+    titleRow.appendChild(clearModeBtn);
+  }
+  header.appendChild(titleRow);
+  header.appendChild(el('div', 'list-date', formatDate(new Date())));
+  var statsRow = el('div', 'list-stats');
+  statsRow.appendChild(el('span', 'stat-incomplete', 'Incomplete: ' + incompleteCount));
+  statsRow.appendChild(el('span', 'stat-completed', 'Completed: ' + completedCount));
+  header.appendChild(statsRow);
+
+  // Selection mode toolbar
+  if (selectionMode) {
+    var selectBar = el('div', 'select-bar');
+    selectBar.style.marginTop = '10px';
+    var allSelected = orders.length > 0 && orders.every(function (o) { return selectedForClear[o.id]; });
+    var selectAllChk = document.createElement('input');
+    selectAllChk.type = 'checkbox';
+    selectAllChk.className = 'card-checkbox';
+    selectAllChk.checked = allSelected;
+    selectAllChk.addEventListener('change', function () {
+      orders.forEach(function (o) { selectedForClear[o.id] = selectAllChk.checked; });
+      rerender();
+    });
+    selectBar.appendChild(selectAllChk);
+    selectBar.appendChild(el('span', 'li-stat', 'Select all'));
+    header.appendChild(selectBar);
+  }
+
+  root.appendChild(header);
 
   if (orders.length === 0) {
-    root.appendChild(el('div', 'card', 'No open draft orders tagged draft-order-tab.'));
+    root.appendChild(el('div', 'card', 'No orders.'));
     return;
   }
 
   orders.forEach(function (order) {
     var orderState = state[order.id];
-    var card = el('div', 'card');
+    var completed = isOrderCompleted(order, orderState);
+    var realId = getRealOrderId(order, orderState);
+    var status = getOrderStatus(order, orderState);
+    var badgeClass = status === 'printed' ? 'badge-printed' : (status === 'completed' ? 'badge-completed' : 'badge-incomplete');
+    var badgeText = status === 'printed' ? 'Printed' : (status === 'completed' ? 'Completed' : 'Incomplete');
+    var isSelected = !!selectedForClear[order.id];
 
-    // ── card header ──
-    card.appendChild(el('h2', null, order.name + (order.customer_name ? ' — ' + order.customer_name : '')));
+    var card = el('div', 'card list-card' + (isSelected ? ' card-selected' : ''));
+
+    // Checkbox (selection mode) + name/badge row
+    var topRow = el('div', 'card-check-row');
+    if (selectionMode) {
+      var chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.className = 'card-checkbox';
+      chk.checked = isSelected;
+      chk.addEventListener('change', function (e) {
+        e.stopPropagation();
+        selectedForClear[order.id] = chk.checked;
+        rerender();
+      });
+      topRow.appendChild(chk);
+    }
+    var nameBlock = el('div');
+    nameBlock.style.flex = '1';
+    var nameBadge = el('div');
+    nameBadge.style.display = 'flex';
+    nameBadge.style.justifyContent = 'space-between';
+    nameBadge.style.alignItems = 'center';
+    var nameSpan = el('span', null, order.name);
+    nameSpan.style.fontWeight = '600';
+    nameSpan.style.fontSize = '15px';
+    nameBadge.appendChild(nameSpan);
+    nameBadge.appendChild(el('span', 'status-badge ' + badgeClass, badgeText));
+    nameBlock.appendChild(nameBadge);
+    topRow.appendChild(nameBlock);
+    card.appendChild(topRow);
+
+    if (order.customer_name) {
+      card.appendChild(el('div', 'li-stat', order.customer_name));
+    }
     if (order.created_at) {
       card.appendChild(el('div', 'order-time', formatTimestamp(order.created_at)));
     }
 
-    // ── line items ──
-    order.line_items.forEach(function (li) {
-      var itemState = getItemState(order.id, li);
-      var row = el('div', 'line-item' + (isFullyResolved(itemState) ? ' resolved' : ''));
-
-      // title
-      row.appendChild(el('div', 'li-title',
-        li.title + (li.variant_title ? ' (' + li.variant_title + ')' : '')));
-
-      // qty — green with "X (of Y)" when partial
-      if (itemState.resolvedType === 'partial' && itemState.resolvedQuantity !== null) {
-        row.appendChild(el('div', 'li-stat confirmed', 'Qty: ' + itemState.resolvedQuantity + ' (of ' + li.quantity + ')'));
-      } else {
-        row.appendChild(el('div', 'li-stat', 'Qty: ' + li.quantity));
-      }
-
-      // confirmed weights (green) — collapse "X, X, X lb" to "X lb × N" when uniform
-      if (itemState.confirmedWeights) {
-        var cw = itemState.confirmedWeights;
-        var allSame = cw.length > 1 && cw.every(function (w) { return w === cw[0]; });
-        var weightStr = allSame
-          ? cw[0] + ' lb × ' + cw.length
-          : cw.join(', ') + ' lb';
-        row.appendChild(el('div', 'li-stat confirmed', 'Weight: ' + weightStr));
-      }
-
-      // cost / price / margin — each field turns green only if the driver changed it
-      var effectivePrice = itemState.newPrice !== null ? itemState.newPrice : parseFloat(li.price || 0);
-      var effectiveCost = itemState.newCost !== null ? itemState.newCost : (li.cost !== null && li.cost !== undefined ? parseFloat(li.cost) : null);
-      var costClass  = itemState.newCost  !== null ? 'li-stat confirmed' : 'li-stat';
-      var priceClass = itemState.newPrice !== null ? 'li-stat confirmed' : 'li-stat';
-      var marginClass = (itemState.newCost !== null || itemState.newPrice !== null) ? 'li-stat confirmed' : 'li-stat';
-
-      if (effectiveCost !== null && !isNaN(effectiveCost)) {
-        row.appendChild(el('div', costClass, 'Cost:   ' + fmtMoney(effectiveCost)));
-      } else {
-        row.appendChild(el('div', 'li-stat', 'Cost:   N/A'));
-      }
-
-      row.appendChild(el('div', priceClass, 'Price:  ' + fmtMoney(effectivePrice)));
-
-      if (effectiveCost !== null && !isNaN(effectiveCost)) {
-        var m = calcMarginPct(effectivePrice, effectiveCost);
-        row.appendChild(el('div', marginClass, 'Margin: ' + (m !== null ? m.toFixed(1) + '%' : 'N/A')));
-      } else {
-        row.appendChild(el('div', 'li-stat', 'Margin: N/A'));
-      }
-
-      // ── action buttons ──
-      var btnRow = el('div');
-
-      // "Update Cost & Price" toggle button
-      var cpBtn = el('button', 'btn btn-update-cp', 'Update Cost & Price');
-      cpBtn.addEventListener('click', function () {
-        itemState.costPriceExpanded = !itemState.costPriceExpanded;
-        rerender();
-      });
-      btnRow.appendChild(cpBtn);
-
-      // "Update Weight" toggle button (weight items only); label changes after resolution
-      if (itemState.hasWeight) {
-        var wBtn = el('button', 'btn btn-update-w', itemState.resolved ? 'Re-enter Weight' : 'Update Weight');
-        wBtn.addEventListener('click', function () {
-          itemState.weightExpanded = !itemState.weightExpanded;
-          rerender();
-        });
-        btnRow.appendChild(wBtn);
-      }
-
-      row.appendChild(btnRow);
-
-      // non-weight items: Found / Partial / Removed
-      if (!itemState.hasWeight) {
-        var actionRow = el('div');
-        if (itemState.resolved) {
-          // show status + Reset
-          var statusLabel = '✓ ' + (itemState.resolvedType || 'resolved');
-          actionRow.appendChild(el('span', 'li-stat', statusLabel));
-          var resetBtn = el('button', 'btn btn-reset', 'Reset');
-          resetBtn.style.marginLeft = '8px';
-          resetBtn.addEventListener('click', function () {
-            itemState.resolved = false;
-            itemState.resolvedType = null;
-            itemState.resolvedQuantity = null;
-            itemState.partialExpanded = false;
-            rerender();
-          });
-          actionRow.appendChild(resetBtn);
-        } else if (itemState.partialExpanded) {
-          // inline partial quantity input
-          var partialInput = document.createElement('input');
-          partialInput.type = 'number'; partialInput.min = '1';
-          partialInput.max = String(li.quantity - 1);
-          partialInput.placeholder = 'Qty found';
-          partialInput.style.cssText = 'width:80px;margin-right:6px;';
-          var confirmPartialBtn = el('button', 'btn btn-partial', 'Confirm');
-          confirmPartialBtn.addEventListener('click', function () {
-            var qty = parseInt(partialInput.value, 10);
-            if (isNaN(qty) || qty < 1 || qty >= li.quantity) return;
-            itemState.partialExpanded = false;
-            markResolved(order.id, li, itemState, 'partial', qty);
-          });
-          var cancelPartialBtn = el('button', 'btn btn-reset', 'Cancel');
-          cancelPartialBtn.addEventListener('click', function () {
-            itemState.partialExpanded = false;
-            rerender();
-          });
-          actionRow.appendChild(partialInput);
-          actionRow.appendChild(confirmPartialBtn);
-          actionRow.appendChild(cancelPartialBtn);
-        } else {
-          // unresolved: show Found / Partial / Removed
-          var foundBtn = el('button', 'btn btn-found', 'Found It');
-          foundBtn.addEventListener('click', function () { markResolved(order.id, li, itemState, 'found'); });
-          var partialBtn = el('button', 'btn btn-partial', 'Partial');
-          partialBtn.addEventListener('click', function () {
-            itemState.partialExpanded = true;
-            rerender();
-          });
-          var removeBtn = el('button', 'btn btn-remove', 'Removed');
-          removeBtn.addEventListener('click', function () { markResolved(order.id, li, itemState, 'remove'); });
-          actionRow.appendChild(foundBtn);
-          actionRow.appendChild(partialBtn);
-          actionRow.appendChild(removeBtn);
-        }
-        row.appendChild(actionRow);
-      }
-
-      // ── expanded panels ──
-      if (itemState.costPriceExpanded) {
-        row.appendChild(buildCostPricePanel(order.id, li, itemState));
-      }
-      if (itemState.weightExpanded) {
-        row.appendChild(buildWeightPanel(order.id, li, itemState));
-      }
-
-      card.appendChild(row);
-    });
-
-    // ── order summary ──
-    card.appendChild(buildOrderSummary(order, orderState));
-
-    // ── complete / progress / results ──
-    if (orderState.completing) {
-      card.appendChild(el('div', 'progress', '⏳ Updating… please wait'));
-    } else if (orderState.completed) {
-      var allOk = !orderState.results.some(function (r) { return !r.success; });
-      if (allOk) {
-        card.appendChild(el('div', 'result-success', '✅ All ' + orderState.results.length + ' items updated successfully.'));
-        var printBtn = el('button', 'btn-print', 'Print Invoice');
-        printBtn.addEventListener('click', function () {
-          if (orderState.realOrderId) window.open('/invoice/' + orderState.realOrderId, '_blank');
-        });
-        card.appendChild(printBtn);
-      } else {
-        var succeeded = orderState.results.filter(function (r) { return r.success; }).length;
-        var failed = orderState.results.filter(function (r) { return !r.success; });
-        card.appendChild(el('div', 'result-mixed', '✅ ' + succeeded + '/' + orderState.results.length + ' items updated'));
-        card.appendChild(el('div', 'result-failed', '❌ Failed: ' + failed.map(function (r) { return r.title; }).join(', ')));
-        card.appendChild(el('div', 'result-contact', 'Please contact Technical Staff.'));
-      }
-    } else {
-      var completeBtn = el('button', 'btn-complete',
-        orderState.completed ? 'Completed ✓' : 'Complete Order');
-      completeBtn.disabled = !!orderState.completed || !allResolved(order.id);
-      completeBtn.addEventListener('click', function () { completeOrder(order); });
-      card.appendChild(completeBtn);
+    // First 3 item titles summary
+    var titles = (order.line_items || []).slice(0, 3).map(function (li) { return li.title; });
+    if (titles.length > 0) {
+      var summary = titles.join(', ') + (order.line_items.length > 3 ? '…' : '');
+      card.appendChild(el('div', 'li-stat', summary));
     }
+
+    // Print Invoice button for completed/printed orders (hidden in selection mode)
+    if (!selectionMode && completed && realId) {
+      var printBtn = el('button', 'btn-print-list', '🖨  Print Invoice');
+      printBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        printInvoice(order.id, realId);
+      });
+      card.appendChild(printBtn);
+    }
+
+    // Tap card → detail view (or toggle selection)
+    card.addEventListener('click', function () {
+      if (selectionMode) {
+        selectedForClear[order.id] = !selectedForClear[order.id];
+        rerender();
+        return;
+      }
+      selectedOrderId = order.id;
+      currentView = 'detail';
+      history.pushState(null, '', '#order-' + order.id);
+      rerender();
+    });
 
     root.appendChild(card);
   });
+
+  // Selection mode action buttons
+  if (selectionMode) {
+    var selectedCount = Object.keys(selectedForClear).filter(function (id) { return selectedForClear[id]; }).length;
+    var confirmBtn = el('button', 'btn-clear-confirm',
+      selectedCount > 0 ? 'Clear Selected (' + selectedCount + ')' : 'Clear Selected');
+    confirmBtn.disabled = selectedCount === 0;
+    if (selectedCount === 0) confirmBtn.style.opacity = '0.5';
+    confirmBtn.addEventListener('click', function () { clearSelected(orders); });
+    root.appendChild(confirmBtn);
+
+    var cancelBtn = el('button', 'btn-cancel-select', 'Cancel');
+    cancelBtn.addEventListener('click', function () {
+      selectionMode = false;
+      selectedForClear = {};
+      rerender();
+    });
+    root.appendChild(cancelBtn);
+  }
+}
+
+// ─── detail view ───────────────────────────────────────────────────────────
+
+function renderDetail(root, orders, orderId) {
+  var order = orders.find(function (o) { return o.id === orderId; });
+  if (!order) {
+    var err = el('div', 'card', 'Order not found.');
+    var back = el('button', 'btn btn-back', '← Back');
+    back.addEventListener('click', function () { currentView = 'list'; selectedOrderId = null; rerender(); });
+    root.appendChild(back);
+    root.appendChild(err);
+    return;
+  }
+
+  // Back button
+  var backBtn = el('button', 'btn btn-back', '← Back');
+  backBtn.addEventListener('click', function () {
+    currentView = 'list';
+    selectedOrderId = null;
+    history.pushState(null, '', '#');
+    rerender();
+  });
+  root.appendChild(backBtn);
+
+  var orderState = state[order.id];
+  var completed = isOrderCompleted(order, orderState);
+
+  // Sourced order — read-only with real line items
+  if (order.status === 'sourced') {
+    var realId = getRealOrderId(order, orderState);
+    var card = el('div', 'card');
+    card.appendChild(el('h2', null, order.name + (order.customer_name ? ' — ' + order.customer_name : '')));
+    if (order.created_at) card.appendChild(el('div', 'order-time', formatTimestamp(order.created_at)));
+    card.appendChild(el('div', 'result-success', '✅ Order completed'));
+
+    // Real order line items (read-only)
+    (order.line_items || []).forEach(function (li) {
+      var row = el('div', 'line-item');
+      row.appendChild(el('div', 'li-title',
+        li.title + (li.variant_title ? ' (' + li.variant_title + ')' : '')));
+      row.appendChild(el('div', 'li-stat', 'Qty: ' + li.quantity));
+      row.appendChild(el('div', 'li-stat', 'Price: $' + li.price));
+      (li.properties || []).forEach(function (p) {
+        row.appendChild(el('div', 'li-stat', p.name + ': ' + p.value));
+      });
+      card.appendChild(row);
+    });
+
+    if (realId) {
+      var printBtn = el('button', 'btn-print', 'Print Invoice');
+      printBtn.addEventListener('click', function () { printInvoice(order.id, realId); });
+      card.appendChild(printBtn);
+    }
+    root.appendChild(card);
+    return;
+  }
+
+  // Open order (or in-session completed open order): full editing UI
+  renderOrderCard(root, order, orderState);
+}
+
+// ─── main render ────────────────────────────────────────────────────────────
+
+function render(orders) {
+  var root = document.getElementById('app');
+  root.innerHTML = '';
+  if (currentView === 'detail' && selectedOrderId !== null) {
+    renderDetail(root, orders, selectedOrderId);
+  } else {
+    renderList(root, orders);
+  }
 }
 
 loadData();

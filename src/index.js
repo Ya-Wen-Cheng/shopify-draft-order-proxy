@@ -19,7 +19,7 @@
 
 export { CostChangeHandler } from './cost-change-handler.js';
 
-import { getPickupData, updateLineItems, completeDraftOrder } from './pickup.js';
+import { getPickupData, updateLineItems, completeDraftOrder, clearOrders } from './pickup.js';
 import { renderPickupPage } from './pickup-template.js';
 import { renderInvoiceHtml } from './invoice-template.js';
 
@@ -153,6 +153,17 @@ export default {
         }
         const result = await completeDraftOrder(restBase, token, draft_order_id, changes);
         return json(result.body, result.status);
+      } catch (err) {
+        return json({ error: err.message }, 500);
+      }
+    }
+
+    // ── PUT /pickup/clear — remove draft-order-tab / add delivered tag ──
+    if (url.pathname === '/pickup/clear' && request.method === 'PUT') {
+      try {
+        const body = await request.json();
+        const result = await clearOrders(restBase, token, body.items || []);
+        return json(result);
       } catch (err) {
         return json({ error: err.message }, 500);
       }

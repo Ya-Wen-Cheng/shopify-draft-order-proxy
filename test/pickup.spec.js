@@ -93,6 +93,10 @@ describe('GET /pickup/data', () => {
           },
         }), { status: 200 }));
       }
+      // sourced orders endpoint returns empty (tested separately)
+      if (url.includes('/orders.json')) {
+        return Promise.resolve(new Response(JSON.stringify({ orders: [] }), { status: 200 }));
+      }
       return Promise.resolve(new Response(JSON.stringify(draftOrdersResponse), { status: 200 }));
     });
   }

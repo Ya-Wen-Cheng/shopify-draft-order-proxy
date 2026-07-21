@@ -85,6 +85,7 @@ export function renderInvoiceHtml(order) {
   <table class="summary">
     <tr><td>Subtotal</td><td>$${escapeHtml(order.subtotal_price || '0.00')}</td></tr>
     <tr><td>Delivery</td><td>$${deliveryFee}</td></tr>
+    <tr><td>Tax</td><td>$${escapeHtml(order.total_tax || '0.00')}</td></tr>
     <tr><td><strong>Total</strong></td><td><strong>$${escapeHtml(order.total_price || '0.00')}</strong></td></tr>
   </table>
 

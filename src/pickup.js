@@ -17,24 +17,30 @@ function shopifyHeaders(token) {
 // ── GET /pickup/data ────────────────────────────────────────────────────────
 
 export async function getPickupData(restBase, token) {
-  const res = await fetch(`${restBase}/draft_orders.json?status=open`, {
-    headers: shopifyHeaders(token),
-  });
-  const data = await res.json();
+  // Parallel fetch: open draft orders tagged draft-order-tab + real orders tagged sourced
+  const [openRes, sourcedRes] = await Promise.all([
+    fetch(`${restBase}/draft_orders.json?status=open&limit=250`, { headers: shopifyHeaders(token) }),
+    fetch(`${restBase}/orders.json?tag=sourced&limit=250`, { headers: shopifyHeaders(token) }),
+  ]);
+  const [openData, sourcedData] = await Promise.all([openRes.json(), sourcedRes.json()]);
 
-  if (!res.ok) {
-    const err = new Error(JSON.stringify(data.errors || data));
-    err.status = res.status;
+  if (!openRes.ok) {
+    const err = new Error(JSON.stringify(openData.errors || openData));
+    err.status = openRes.status;
     throw err;
   }
 
-  const draftOrders = (data.draft_orders || []).filter(order => {
+  const hasTag = order => (order.tags || '').split(',').map(t => t.trim()).includes('draft-order-tab');
+  const openOrders = (openData.draft_orders || []).filter(hasTag);
+  // Exclude already-delivered orders from the pickup list
+  const sourcedOrders = (sourcedData.orders || []).filter(order => {
     const tags = (order.tags || '').split(',').map(t => t.trim());
-    return tags.includes('draft-order-tab');
+    return !tags.includes('delivered');
   });
 
+  // GraphQL enrichment only for open orders (need cost + weight tag)
   const productIds = [...new Set(
-    draftOrders.flatMap(o => (o.line_items || []).map(li => li.product_id)).filter(Boolean)
+    openOrders.flatMap(o => (o.line_items || []).map(li => li.product_id)).filter(Boolean)
   )];
 
   const weightProductIds = new Set();
@@ -73,7 +79,6 @@ export async function getPickupData(restBase, token) {
       if (node?.tags?.some(t => t.toLowerCase() === 'weight')) {
         weightProductIds.add(Number(node.id.split('/').pop()));
       }
-      // Build variant cost map from each product's variant edges
       for (const edge of node?.variants?.edges || []) {
         const variantNode = edge.node;
         const numericVariantId = Number(variantNode.id.split('/').pop());
@@ -85,13 +90,22 @@ export async function getPickupData(restBase, token) {
     }
   }
 
-  return draftOrders.map(order => ({
+  function customerName(order) {
+    // Prefer shipping address, fall back to customer record
+    const fromShipping = [order.shipping_address?.first_name, order.shipping_address?.last_name]
+      .filter(Boolean).join(' ');
+    if (fromShipping) return fromShipping;
+    return [order.customer?.first_name, order.customer?.last_name]
+      .filter(Boolean).join(' ');
+  }
+
+  const enrichedOpen = openOrders.map(order => ({
     id: order.id,
     name: order.name,
+    status: 'open',
+    order_id: null,
     created_at: order.created_at,
-    customer_name: [order.shipping_address?.first_name, order.shipping_address?.last_name]
-      .filter(Boolean)
-      .join(' '),
+    customer_name: customerName(order),
     line_items: (order.line_items || []).map(li => {
       const variantInfo = variantCostMap.get(li.variant_id);
       return {
@@ -109,6 +123,29 @@ export async function getPickupData(restBase, token) {
       };
     }),
   }));
+
+  // Sourced orders already have all the data we need — no second fetch required
+  const enrichedSourced = sourcedOrders.map(order => ({
+    id: order.id,
+    name: order.name,
+    status: 'sourced',
+    order_id: order.id,
+    created_at: order.created_at,
+    customer_name: customerName(order),
+    line_items: (order.line_items || []).map(li => ({
+      id: li.id,
+      title: li.title,
+      variant_title: li.variant_title || null,
+      quantity: li.quantity,
+      price: li.price,
+      properties: li.properties || [],
+    })),
+  }));
+
+  // Combined, newest first
+  return [...enrichedOpen, ...enrichedSourced].sort(
+    (a, b) => new Date(b.created_at) - new Date(a.created_at)
+  );
 }
 
 // ── PUT /pickup/update ──────────────────────────────────────────────────────
@@ -428,4 +465,60 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
   }
 
   return { status: 200, body: { results, all_succeeded: true, draft_order: completeData.draft_order, order_id: orderId } };
+}
+
+// ── PUT /pickup/clear ───────────────────────────────────────────────────────
+// items: [{ type: 'draft_order'|'order', id }]
+// draft_order → remove 'draft-order-tab' tag
+// order       → add 'delivered' tag
+
+export async function clearOrders(restBase, token, items = []) {
+  const results = [];
+
+  for (const item of items) {
+    try {
+      if (item.type === 'draft_order') {
+        const getRes = await fetch(`${restBase}/draft_orders/${item.id}.json`, { headers: shopifyHeaders(token) });
+        const getData = await getRes.json();
+        if (!getRes.ok) throw new Error(JSON.stringify(getData.errors));
+
+        const tags = (getData.draft_order.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+        const newTags = tags.filter(t => t !== 'draft-order-tab');
+        const putRes = await fetch(`${restBase}/draft_orders/${item.id}.json`, {
+          method: 'PUT',
+          headers: shopifyHeaders(token),
+          body: JSON.stringify({ draft_order: { id: Number(item.id), tags: newTags.join(', ') } }),
+        });
+        if (!putRes.ok) {
+          const putData = await putRes.json();
+          throw new Error(JSON.stringify(putData.errors));
+        }
+        results.push({ id: item.id, type: item.type, success: true });
+
+      } else if (item.type === 'order') {
+        const getRes = await fetch(`${restBase}/orders/${item.id}.json`, { headers: shopifyHeaders(token) });
+        const getData = await getRes.json();
+        if (!getRes.ok) throw new Error(JSON.stringify(getData.errors));
+
+        const tags = (getData.order.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+        if (!tags.includes('delivered')) {
+          tags.push('delivered');
+          const putRes = await fetch(`${restBase}/orders/${item.id}.json`, {
+            method: 'PUT',
+            headers: shopifyHeaders(token),
+            body: JSON.stringify({ order: { id: Number(item.id), tags: tags.join(', ') } }),
+          });
+          if (!putRes.ok) {
+            const putData = await putRes.json();
+            throw new Error(JSON.stringify(putData.errors));
+          }
+        }
+        results.push({ id: item.id, type: item.type, success: true });
+      }
+    } catch (err) {
+      results.push({ id: item.id, type: item.type, success: false, error: err.message });
+    }
+  }
+
+  return { results, all_succeeded: results.every(r => r.success) };
 }
