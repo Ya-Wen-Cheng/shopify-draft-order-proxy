@@ -65,7 +65,7 @@ export function renderPickupPage() {
   .list-card { cursor: pointer; }
   .list-card:active { opacity: 0.85; }
   .btn-back { background: #6b7280; color: #fff; margin-bottom: 12px; }
-  .btn-print-list { background: #6b21a8; color: #fff; padding: 8px 14px; font-size: 13px; border: none; border-radius: 6px; cursor: pointer; margin-top: 8px; display: block; width: 100%; }
+  .btn-print-list { background: #6b21a8; color: #fff; padding: 8px 14px; font-size: 13px; border: none; border-radius: 6px; cursor: pointer; margin-top: 8px; display: block; width: 100%; position: relative; z-index: 2; }
   .progress-bar-wrap { background: #e5e7eb; border-radius: 4px; height: 8px; margin-top: 10px; overflow: hidden; }
   .progress-bar-fill { height: 100%; background: #2563eb; border-radius: 4px; width: 0%; }
   .progress-bar-fill.loading { animation: progress-loading 1.5s ease-in-out forwards; }
@@ -971,19 +971,69 @@ function renderList(root, orders) {
 
     // Swipe left → mark as delivered (completed/printed orders only)
     if (completed && realId) {
+      card.style.position = 'relative';
+      card.style.overflow = 'hidden';
+
+      // Green overlay tracks the finger; sits above card content but below Print Invoice button
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:absolute;top:0;right:0;height:100%;width:0;background:#22c55e;opacity:0.5;z-index:1;pointer-events:none;border-radius:0 8px 8px 0;';
+      card.appendChild(overlay);
+
       var swipeStartX = null;
+      var triggered = false;
+
+      function resetOverlay() {
+        overlay.style.transition = 'width 0.2s ease-out';
+        overlay.style.width = '0';
+        swipeStartX = null;
+        triggered = false;
+      }
+
       card.addEventListener('touchstart', function (e) {
         swipeStartX = e.touches[0].clientX;
+        triggered = false;
+        overlay.style.transition = 'none'; // track finger with no lag
       }, { passive: true });
-      card.addEventListener('touchend', function (e) {
-        if (swipeStartX === null) return;
-        var delta = e.changedTouches[0].clientX - swipeStartX;
-        swipeStartX = null;
-        if (delta < -60) {
-          e.preventDefault(); // prevent click
-          markDelivered(order);
+
+      card.addEventListener('touchmove', function (e) {
+        if (swipeStartX === null || triggered) return;
+        var touch = e.touches[0];
+        var delta = touch.clientX - swipeStartX;
+        var cardWidth = card.offsetWidth;
+
+        // If finger moves outside the card's vertical bounds, snap back
+        var rect = card.getBoundingClientRect();
+        if (touch.clientY < rect.top || touch.clientY > rect.bottom) {
+          resetOverlay();
+          return;
         }
-      });
+
+        if (delta < 0) {
+          var swipeWidth = Math.min(-delta, cardWidth);
+          overlay.style.width = swipeWidth + 'px';
+
+          // Trigger when overlay reaches 50% of card width
+          if (swipeWidth >= cardWidth / 2) {
+            triggered = true;
+            e.preventDefault(); // prevent click
+            // Reset instantly (no transition) and force a paint before the blocking confirm()
+            overlay.style.transition = 'none';
+            overlay.style.width = '0';
+            swipeStartX = null;
+            void overlay.offsetWidth; // flush reflow
+            requestAnimationFrame(function () {
+              requestAnimationFrame(function () {
+                triggered = false;
+                markDelivered(order);
+              });
+            });
+          }
+        }
+      }, { passive: false });
+
+      // Snap back on finger lift (if threshold not met) or touch cancelled
+      card.addEventListener('touchend', function () { if (!triggered) resetOverlay(); });
+      card.addEventListener('touchcancel', resetOverlay);
     }
 
     root.appendChild(card);
