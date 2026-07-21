@@ -20,9 +20,7 @@ export function renderPickupPage() {
   .order-time { font-size: 12px; color: #888; margin-bottom: 8px; }
   .line-item { border-top: 1px solid #eee; padding: 12px 0; }
   .line-item:first-child { border-top: none; }
-  .line-item.resolved .li-title,
-  .line-item.resolved .li-stat,
-  .line-item.resolved .confirmed { opacity: 0.6; }
+  .btn-reset { background: #9ca3af; color: #fff; }
   .li-title { font-size: 15px; font-weight: 500; }
   .li-stat { font-size: 13px; color: #555; margin-top: 2px; }
   .confirmed { color: #16a34a; font-weight: 600; }
@@ -109,7 +107,6 @@ function getItemState(orderId, li) {
   var order = state[orderId];
   if (!order.items[li.id]) {
     order.items[li.id] = {
-      // existing fields
       resolved: false,
       resolvedType: null,
       hasWeight: !!li.has_weight_tag,
@@ -119,9 +116,9 @@ function getItemState(orderId, li) {
       quantity: li.quantity,
       unitPrice: li.price,
       resolvedQuantity: null,
+      partialExpanded: false,
       weightExpanded: false,
       confirmedWeights: null,
-      // new fields
       costPriceExpanded: false,
       costPriceConfirmed: false,
       newCost: null,
@@ -138,7 +135,7 @@ function getItemState(orderId, li) {
 
 function isFullyResolved(itemState) {
   if (!itemState.resolved) return false;
-  // cost must be known — either already on record or entered by driver
+  if (itemState.resolvedType === 'remove') return true; // removed items don't need a cost
   return itemState.currentCost !== null || itemState.newCost !== null;
 }
 
@@ -541,7 +538,13 @@ function render(orders) {
       // title
       row.appendChild(el('div', 'li-title',
         li.title + (li.variant_title ? ' (' + li.variant_title + ')' : '')));
-      row.appendChild(el('div', 'li-stat', 'Qty: ' + li.quantity));
+
+      // qty — green with "X (of Y)" when partial
+      if (itemState.resolvedType === 'partial' && itemState.resolvedQuantity !== null) {
+        row.appendChild(el('div', 'li-stat confirmed', 'Qty: ' + itemState.resolvedQuantity + ' (of ' + li.quantity + ')'));
+      } else {
+        row.appendChild(el('div', 'li-stat', 'Qty: ' + li.quantity));
+      }
 
       // confirmed weights (green)
       if (itemState.confirmedWeights) {
@@ -549,12 +552,12 @@ function render(orders) {
           'Weight: ' + itemState.confirmedWeights.join(', ') + ' lb'));
       }
 
-      // price / cost / margin display
+      // cost / price / margin — each field turns green only if the driver changed it
       var effectivePrice = itemState.newPrice !== null ? itemState.newPrice : parseFloat(li.price || 0);
       var effectiveCost = itemState.newCost !== null ? itemState.newCost : (li.cost !== null && li.cost !== undefined ? parseFloat(li.cost) : null);
-      var priceClass = itemState.costPriceConfirmed ? 'li-stat confirmed' : 'li-stat';
-      var costClass = priceClass;
-      var marginClass = priceClass;
+      var costClass  = itemState.newCost  !== null ? 'li-stat confirmed' : 'li-stat';
+      var priceClass = itemState.newPrice !== null ? 'li-stat confirmed' : 'li-stat';
+      var marginClass = (itemState.newCost !== null || itemState.newPrice !== null) ? 'li-stat confirmed' : 'li-stat';
 
       if (effectiveCost !== null && !isNaN(effectiveCost)) {
         row.appendChild(el('div', costClass, 'Cost:   ' + fmtMoney(effectiveCost)));
@@ -566,11 +569,9 @@ function render(orders) {
 
       if (effectiveCost !== null && !isNaN(effectiveCost)) {
         var m = calcMarginPct(effectivePrice, effectiveCost);
-        if (m !== null) {
-          row.appendChild(el('div', marginClass, 'Margin: ' + m.toFixed(1) + '%'));
-        }
+        row.appendChild(el('div', marginClass, 'Margin: ' + (m !== null ? m.toFixed(1) + '%' : 'N/A')));
       } else {
-        row.appendChild(el('div', 'li-stat', 'Cost:   N/A'));
+        row.appendChild(el('div', 'li-stat', 'Margin: N/A'));
       }
 
       // ── action buttons ──
@@ -596,27 +597,59 @@ function render(orders) {
 
       row.appendChild(btnRow);
 
-      // non-weight items: Found / Partial / Removed (if not yet resolved)
+      // non-weight items: Found / Partial / Removed
       if (!itemState.hasWeight) {
         var actionRow = el('div');
-        if (!itemState.resolved) {
+        if (itemState.resolved) {
+          // show status + Reset
+          var statusLabel = '✓ ' + (itemState.resolvedType || 'resolved');
+          actionRow.appendChild(el('span', 'li-stat', statusLabel));
+          var resetBtn = el('button', 'btn btn-reset', 'Reset');
+          resetBtn.style.marginLeft = '8px';
+          resetBtn.addEventListener('click', function () {
+            itemState.resolved = false;
+            itemState.resolvedType = null;
+            itemState.resolvedQuantity = null;
+            itemState.partialExpanded = false;
+            rerender();
+          });
+          actionRow.appendChild(resetBtn);
+        } else if (itemState.partialExpanded) {
+          // inline partial quantity input
+          var partialInput = document.createElement('input');
+          partialInput.type = 'number'; partialInput.min = '1';
+          partialInput.max = String(li.quantity - 1);
+          partialInput.placeholder = 'Qty found';
+          partialInput.style.cssText = 'width:80px;margin-right:6px;';
+          var confirmPartialBtn = el('button', 'btn btn-partial', 'Confirm');
+          confirmPartialBtn.addEventListener('click', function () {
+            var qty = parseInt(partialInput.value, 10);
+            if (isNaN(qty) || qty < 1 || qty >= li.quantity) return;
+            itemState.partialExpanded = false;
+            markResolved(order.id, li, itemState, 'partial', qty);
+          });
+          var cancelPartialBtn = el('button', 'btn btn-reset', 'Cancel');
+          cancelPartialBtn.addEventListener('click', function () {
+            itemState.partialExpanded = false;
+            rerender();
+          });
+          actionRow.appendChild(partialInput);
+          actionRow.appendChild(confirmPartialBtn);
+          actionRow.appendChild(cancelPartialBtn);
+        } else {
+          // unresolved: show Found / Partial / Removed
           var foundBtn = el('button', 'btn btn-found', 'Found It');
           foundBtn.addEventListener('click', function () { markResolved(order.id, li, itemState, 'found'); });
           var partialBtn = el('button', 'btn btn-partial', 'Partial');
           partialBtn.addEventListener('click', function () {
-            var raw = prompt('Quantity found:', li.quantity);
-            if (raw === null) return;
-            var qty = parseInt(raw, 10);
-            if (isNaN(qty) || qty < 1 || qty >= li.quantity) return;
-            markResolved(order.id, li, itemState, 'partial', qty);
+            itemState.partialExpanded = true;
+            rerender();
           });
           var removeBtn = el('button', 'btn btn-remove', 'Removed');
           removeBtn.addEventListener('click', function () { markResolved(order.id, li, itemState, 'remove'); });
           actionRow.appendChild(foundBtn);
           actionRow.appendChild(partialBtn);
           actionRow.appendChild(removeBtn);
-        } else {
-          actionRow.appendChild(el('span', 'li-stat', '✓ ' + (itemState.resolvedType || 'resolved')));
         }
         row.appendChild(actionRow);
       }
