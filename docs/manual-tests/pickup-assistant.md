@@ -48,11 +48,11 @@ Note the current cost and price for items A, C, and D before testing.
 ### 1. Homepage — list view
 
 1. [ ] Navigate to `/pickup` in a mobile browser (or browser devtools mobile view)
-2. [ ] Page header shows today's date and a `Clear` button (top-right)
+2. [ ] Page header shows today's date
 3. [ ] Stats row shows `Incomplete: N` (orange) and `Completed: N` (green) counts
 4. [ ] Each order card shows: order name + status badge, customer name, timestamp, first 3 item titles
 5. [ ] Incomplete draft orders show an amber `Incomplete` badge
-6. [ ] Sourced orders (tagged `sourced`, not yet delivered) show a green `Completed` badge with a `🖨 Print Invoice` button
+6. [ ] Sourced orders (tagged `sourced`, not yet delivered) show a green `Completed` badge and a `🖨 Print Invoice` button on the card
 7. [ ] Sourced orders tagged `delivered` do **not** appear
 
 ---
@@ -204,20 +204,15 @@ Note the current cost and price for items A, C, and D before testing.
 
 ---
 
-### 17. Clear — multi-selection
+### 17. Swipe to Deliver
 
-80. [ ] `[Clear]` button visible in the list header (top-right)
-81. [ ] Tap `[Clear]` — each card gains a checkbox; `Select all` checkbox appears at top; `[Clear Selected]` and `[Cancel]` buttons appear at bottom
-82. [ ] Tapping a card toggles its checkbox (no navigation)
-83. [ ] `[Clear Selected]` is disabled (greyed) when nothing is selected
-84. [ ] `Select all` checkbox selects all visible orders at once
-85. [ ] `[Cancel]` exits selection mode without changes
-86. [ ] Select one Incomplete draft order — button reads `Clear Selected (1)`
-87. [ ] Select one Completed sourced order as well — button reads `Clear Selected (2)`
-88. [ ] `[Clear Selected (2)]` — request sent; on success list refreshes
-89. [ ] Cleared draft order no longer appears (lost `draft-order-tab` tag in Shopify)
-90. [ ] Cleared sourced order no longer appears (gained `delivered` tag in Shopify)
-91. [ ] Verify in Shopify Admin: draft order no longer has `draft-order-tab` tag; real order now has `delivered` tag
+80. [ ] Swipe left slowly on a Completed or Printed order card — green overlay appears from the right edge, tracking the finger
+81. [ ] Release before reaching the card's midpoint — overlay snaps back, no action taken
+82. [ ] Swipe left past the midpoint — overlay snaps back instantly and a confirmation modal appears: "Mark order #XXXX as delivered?"
+83. [ ] Tap **Cancel** in the modal — modal dismisses, order remains in list
+84. [ ] Swipe past midpoint again — tap **Mark as Delivered** — order disappears from the list
+85. [ ] Verify in Shopify Admin: the order now has the `delivered` tag
+86. [ ] Swipe left on an Incomplete order card — no overlay appears (swipe-to-deliver only for Completed/Printed)
 
 ---
 
