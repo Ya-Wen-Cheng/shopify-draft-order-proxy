@@ -310,29 +310,23 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
         // REST API silently ignores price on variant line items.
         //
         // Shopify rules:
-        //   - priceOverride works for variant line items (overrides catalog price).
+        //   - priceOverride works for both variant and custom line items.
         //   - originalUnitPrice/originalUnitPriceWithCurrency is ignored when
         //     variantId is provided; it only applies to custom line items.
-        //   - weight is also ignored when variantId is provided.
+        //   - Keeping variantId preserves product association for sales analytics.
         //
-        // Weight items are converted to custom line items (no variantId) so that
-        // originalUnitPrice (= totalWeight × pricePerLb) is honoured. Unit variant
-        // items keep their variantId and use priceOverride.
+        // All variant items (including weight items) keep their variantId and use
+        // priceOverride so Shopify analytics remain accurate.
         const gqlLineItems = mergedLineItems.map(li => {
-          const isWeightItem = (li.properties || []).some(p => p.name === 'Weight (lb)');
           const input = {
             quantity: li.quantity,
             customAttributes: (li.properties || []).map(p => ({ key: p.name, value: p.value })),
           };
-          if (li.variant_id && !isWeightItem) {
-            // Unit variant item: keep product association, override price.
+          if (li.variant_id) {
             input.variantId = `gid://shopify/ProductVariant/${li.variant_id}`;
             input.priceOverride = { amount: String(li.price), currencyCode: 'USD' };
           } else {
-            // Weight items and existing custom items: omit variantId so
-            // originalUnitPrice (= calculated total) is applied.
-            const title = li.variant_title ? `${li.title} - ${li.variant_title}` : li.title;
-            input.title = title;
+            input.title = li.title;
             input.requiresShipping = li.requires_shipping ?? true;
             input.originalUnitPrice = String(li.price);
           }
