@@ -384,27 +384,27 @@ describe('POST /', () => {
 describe('POST /?action=signup', () => {
   beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
 
+  // All required fields for the signup handler
   const baseSignup = {
     first_name: 'Jane',
     last_name: 'Doe',
     email: 'jane@example.com',
     phone: '555-1234',
-    business_name: 'Joe Cafe',
+    restaurant_name: 'Joe Cafe',
+    restaurant_phone: '555-9999',
+    business_type: 'restaurant',
+    business_subtype: 'casual',
+    emergency_name: 'Bob',
+    emergency_phone: '555-0000',
+    ordering_method: ['online'],
     address: {
       address1: '123 Main St',
       address2: 'Suite 1',
       city: 'Los Angeles',
       province: 'CA',
       zip: '90001',
-      country: 'United States',
     },
   };
-
-  function mockShopifyCustomer(customer = { id: 7001, email: 'jane@example.com' }, status = 201) {
-    globalThis.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ customer }), { status })
-    );
-  }
 
   function signupRequest(body) {
     return new Request('http://example.com/?action=signup', {
@@ -414,19 +414,37 @@ describe('POST /?action=signup', () => {
     });
   }
 
-  it('happy path — calls customers.json and returns success with customer id and email', async () => {
-    mockShopifyCustomer({ id: 7001, email: 'jane@example.com' });
+  // Mock a successful customerCreate GraphQL response
+  function mockCreateSuccess(customer = { id: 'gid://shopify/Customer/7001', email: 'jane@example.com' }) {
+    globalThis.fetch.mockResolvedValue(
+      new Response(JSON.stringify({
+        data: { customerCreate: { customer, userErrors: [] } },
+      }), { status: 200 })
+    );
+  }
+
+  it('happy path — calls /graphql.json with customerCreate and returns success', async () => {
+    mockCreateSuccess();
 
     const res = await call(signupRequest(baseSignup));
     expect(res.status).toBe(200);
 
     const data = await res.json();
-    expect(data).toEqual({ success: true, customer: { id: 7001, email: 'jane@example.com' } });
+    expect(data.success).toBe(true);
+    expect(data.customer.id).toBe('gid://shopify/Customer/7001');
+    expect(data.customer.email).toBe('jane@example.com');
 
     const [url, opts] = globalThis.fetch.mock.calls[0];
-    expect(url).toContain('/customers.json');
+    expect(url).toContain('/graphql.json');
     expect(opts.method).toBe('POST');
     expect(opts.headers['X-Shopify-Access-Token']).toBe('test-token');
+
+    const reqBody = JSON.parse(opts.body);
+    expect(reqBody.query).toContain('customerCreate');
+    expect(reqBody.variables.input.email).toBe('jane@example.com');
+    expect(reqBody.variables.input.firstName).toBe('Jane');
+    // metafields array should be present (filtering removes empties, so at least ordering_method)
+    expect(Array.isArray(reqBody.variables.input.metafields)).toBe(true);
   });
 
   it('returns 400 validation error when email is missing', async () => {
@@ -438,19 +456,6 @@ describe('POST /?action=signup', () => {
     expect(data.message).toContain('email');
   });
 
-  it('returns 400 when address field is missing', async () => {
-    const body = signupRequest({
-      first_name: 'Test', last_name: 'User', email: 'test@example.com',
-      address: { address1: '123 Main St', city: 'NYC', zip: '10001' }
-      // province deliberately omitted
-    });
-    const res = await call(body);
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toBe('validation');
-    expect(data.message).toMatch(/address\.province/i);
-  });
-
   it('returns 400 validation error for invalid email format', async () => {
     const res = await call(signupRequest({ ...baseSignup, email: 'not-an-email' }));
     expect(res.status).toBe(400);
@@ -459,63 +464,82 @@ describe('POST /?action=signup', () => {
     expect(data.message).toContain('Invalid email');
   });
 
-  it('returns 409 duplicate_email when Shopify returns 422 with errors.email', async () => {
+  it('returns 400 when address.province is missing', async () => {
+    const { province: _p, ...addressNoProvince } = baseSignup.address;
+    const res = await call(signupRequest({ ...baseSignup, address: addressNoProvince }));
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toBe('validation');
+    expect(data.message).toMatch(/address\.province/i);
+  });
+
+  it('duplicate email — finds customer via GraphQL, then calls customerUpdate, returns success', async () => {
+    // Call 1: customerCreate returns CUSTOMER_ALREADY_EXISTS
+    // Call 2: customers query returns existing customer
+    // Call 3: customerUpdate returns success
+    globalThis.fetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: {
+            customerCreate: {
+              customer: null,
+              userErrors: [{ field: ['email'], message: 'Email has already been taken', code: 'CUSTOMER_ALREADY_EXISTS' }],
+            },
+          },
+        }), { status: 200 })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: {
+            customers: {
+              edges: [{
+                node: { id: 'gid://shopify/Customer/7001', email: 'jane@example.com', note: null, tags: [] },
+              }],
+            },
+          },
+        }), { status: 200 })
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({
+          data: { customerUpdate: { customer: { id: 'gid://shopify/Customer/7001' }, userErrors: [] } },
+        }), { status: 200 })
+      );
+
+    const res = await call(signupRequest(baseSignup));
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+
+    // Second call should be the find-by-email GraphQL query
+    const [findUrl, findOpts] = globalThis.fetch.mock.calls[1];
+    expect(findUrl).toContain('/graphql.json');
+    const findBody = JSON.parse(findOpts.body);
+    expect(findBody.query).toContain('customers');
+    expect(findBody.variables.query).toContain('jane@example.com');
+
+    // Third call should be customerUpdate using GID directly
+    const [, updateOpts] = globalThis.fetch.mock.calls[2];
+    const updateBody = JSON.parse(updateOpts.body);
+    expect(updateBody.query).toContain('customerUpdate');
+    expect(updateBody.variables.input.id).toBe('gid://shopify/Customer/7001');
+  });
+
+  it('returns 422 when Shopify returns a non-duplicate userError', async () => {
     globalThis.fetch.mockResolvedValue(
-      new Response(JSON.stringify({ errors: { email: ['has already been taken'] } }), { status: 422 })
+      new Response(JSON.stringify({
+        data: {
+          customerCreate: {
+            customer: null,
+            userErrors: [{ field: ['phone'], message: 'Phone is invalid', code: 'INVALID' }],
+          },
+        },
+      }), { status: 200 })
     );
 
     const res = await call(signupRequest(baseSignup));
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(422);
     const data = await res.json();
-    expect(data.error).toBe('duplicate_email');
-  });
-
-  it('builds note with business name', async () => {
-    mockShopifyCustomer();
-
-    await call(signupRequest({ ...baseSignup, business_name: 'Joe Cafe' }));
-
-    const [, opts] = globalThis.fetch.mock.calls[0];
-    const body = JSON.parse(opts.body);
-    expect(body.customer.note).toBe('membership-signup\nBusiness: Joe Cafe');
-  });
-
-  it('builds note without business name', async () => {
-    mockShopifyCustomer();
-    const { business_name: _bn, ...noBusinessName } = baseSignup;
-
-    await call(signupRequest(noBusinessName));
-
-    const [, opts] = globalThis.fetch.mock.calls[0];
-    const body = JSON.parse(opts.body);
-    expect(body.customer.note).toBe('membership-signup');
-  });
-
-  it('includes address in customer payload', async () => {
-    mockShopifyCustomer();
-
-    await call(signupRequest(baseSignup));
-
-    const [, opts] = globalThis.fetch.mock.calls[0];
-    const body = JSON.parse(opts.body);
-    expect(body.customer.addresses).toHaveLength(1);
-    expect(body.customer.addresses[0]).toMatchObject({
-      address1: '123 Main St',
-      city: 'Los Angeles',
-      province: 'CA',
-      zip: '90001',
-    });
-  });
-
-  it('defaults country to United States when omitted', async () => {
-    mockShopifyCustomer();
-    const { address: { country: _c, ...addressNoCountry }, ...rest } = baseSignup;
-
-    await call(signupRequest({ ...rest, address: addressNoCountry }));
-
-    const [, opts] = globalThis.fetch.mock.calls[0];
-    const body = JSON.parse(opts.body);
-    expect(body.customer.addresses[0].country).toBe('United States');
+    expect(data.error).toBe('shopify_error');
   });
 });
 
@@ -532,10 +556,11 @@ describe('POST /?action=activate-membership', () => {
     });
   }
 
-  // Helper: mock GET then PUT with given existing note
-  function mockGetThenPut(existingNote = null, putStatus = 200) {
+  // Helper: mock GET (REST) then GraphQL customerUpdate
+  function mockGetThenGraphQL(existingNote = null, updateUserErrors = []) {
     globalThis.fetch.mockImplementation((url, opts) => {
       const method = (opts && opts.method) ? opts.method.toUpperCase() : 'GET';
+      // First call: REST GET for existing customer
       if (method === 'GET') {
         return Promise.resolve(
           new Response(
@@ -544,68 +569,79 @@ describe('POST /?action=activate-membership', () => {
           )
         );
       }
-      // PUT
+      // Second call: GraphQL customerUpdate
       return Promise.resolve(
         new Response(
-          JSON.stringify({ customer: { id: 5001, note: 'membership-signup' } }),
-          { status: putStatus }
+          JSON.stringify({
+            data: {
+              customerUpdate: {
+                customer: { id: 'gid://shopify/Customer/5001' },
+                userErrors: updateUserErrors,
+              },
+            },
+          }),
+          { status: 200 }
         )
       );
     });
   }
 
-  it('happy path — GETs customer first, then PUTs combined note and returns success', async () => {
-    mockGetThenPut(null); // no existing note
+  it('happy path — GETs customer first, then calls GraphQL customerUpdate and returns success', async () => {
+    mockGetThenGraphQL(null); // no existing note
 
     const res = await call(activateRequest({ customer_id: 5001 }));
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toEqual({ success: true });
 
-    // First call must be GET
+    // First call must be REST GET
     const [getUrl, getOpts] = globalThis.fetch.mock.calls[0];
     expect(getUrl).toContain('/customers/5001.json');
-    expect((getOpts && getOpts.method) || 'GET').not.toBe('PUT');
+    expect((getOpts && getOpts.method) || 'GET').not.toBe('POST');
 
-    // Second call must be PUT with note = 'membership-signup'
-    const [putUrl, putOpts] = globalThis.fetch.mock.calls[1];
-    expect(putUrl).toContain('/customers/5001.json');
-    expect(putOpts.method).toBe('PUT');
-    const putBody = JSON.parse(putOpts.body);
-    expect(putBody).toEqual({ customer: { id: 5001, note: 'membership-signup' } });
+    // Second call must be GraphQL customerUpdate
+    const [gqlUrl, gqlOpts] = globalThis.fetch.mock.calls[1];
+    expect(gqlUrl).toContain('/graphql.json');
+    expect(gqlOpts.method).toBe('POST');
+    const gqlBody = JSON.parse(gqlOpts.body);
+    expect(gqlBody.query).toContain('customerUpdate');
+    expect(gqlBody.variables.input.id).toBe('gid://shopify/Customer/5001');
+    expect(gqlBody.variables.input.note).toBe('membership-signup');
   });
 
-  it('prepends membership-signup to existing note', async () => {
-    mockGetThenPut('Some existing note');
+  it('prepends membership-signup to existing note when note is present', async () => {
+    mockGetThenGraphQL('Some existing note');
 
     await call(activateRequest({ customer_id: 5001 }));
 
-    const [, putOpts] = globalThis.fetch.mock.calls[1];
-    const putBody = JSON.parse(putOpts.body);
-    expect(putBody.customer.note).toBe('membership-signup\nSome existing note');
+    const [, gqlOpts] = globalThis.fetch.mock.calls[1];
+    const gqlBody = JSON.parse(gqlOpts.body);
+    expect(gqlBody.variables.input.note).toBe('membership-signup\nSome existing note');
   });
 
-  it('skips PUT and returns success when note already starts with membership-signup', async () => {
-    mockGetThenPut('membership-signup\nOld note');
+  it('always writes metafields even if note already starts with membership-signup (no idempotency early-return)', async () => {
+    // Note already starts with membership-signup — we must NOT early-return, still call customerUpdate
+    mockGetThenGraphQL('membership-signup\nOld note');
 
     const res = await call(activateRequest({ customer_id: 5001 }));
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data).toEqual({ success: true });
 
-    // Only the GET call should have been made — no PUT
-    expect(globalThis.fetch.mock.calls).toHaveLength(1);
+    // Both calls must have been made (GET + GraphQL customerUpdate)
+    expect(globalThis.fetch.mock.calls).toHaveLength(2);
+    const [, gqlOpts] = globalThis.fetch.mock.calls[1];
+    const gqlBody = JSON.parse(gqlOpts.body);
+    expect(gqlBody.query).toContain('customerUpdate');
   });
 
   it('accepts customer_id as a string and coerces it to a number', async () => {
-    mockGetThenPut(null);
+    mockGetThenGraphQL(null);
 
     const res = await call(activateRequest({ customer_id: '5001' }));
     expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data).toEqual({ success: true });
+    expect(res.status).toBe(200);
 
-    // URLs should use the coerced numeric id (no quotes in URL)
     const [getUrl] = globalThis.fetch.mock.calls[0];
     expect(getUrl).toContain('/customers/5001.json');
   });

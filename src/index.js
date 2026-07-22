@@ -58,9 +58,13 @@ function buildMetafields(body) {
     { key: 'emergency_alt_phone', value: body.emergency_alt_phone },
     {
       key: 'ordering_method',
-      value: Array.isArray(body.ordering_method) && body.ordering_method.length > 0
-        ? JSON.stringify(body.ordering_method)
-        : '',
+      // Fix 6: coerce string → array so callers can pass either form
+      value: (() => {
+        const orderingMethod = Array.isArray(body.ordering_method)
+          ? body.ordering_method
+          : (typeof body.ordering_method === 'string' ? [body.ordering_method] : []);
+        return orderingMethod.length > 0 ? JSON.stringify(orderingMethod) : '';
+      })(),
     },
   ];
 
@@ -407,7 +411,7 @@ export default {
           address1: address.address1,
           address2: address.address2 || '',
           city: address.city,
-          province: address.province,
+          provinceCode: address.province,
           zip: address.zip,
           countryCode: 'US',
           phone: restaurant_phone,
@@ -434,13 +438,28 @@ export default {
         );
 
         if (isDuplicateEmail) {
-          // Find the existing customer by email
-          const searchRes = await fetch(
-            `${restBase}/customers/search.json?query=email:${encodeURIComponent(email)}&limit=1`,
-            { headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token } }
-          );
-          const searchResult = await searchRes.json();
-          const existingCustomer = searchResult?.customers?.[0];
+          // Fix 2: Find the existing customer by email via GraphQL (replaces REST customers/search.json)
+          const findQuery = `
+            query findCustomer($query: String!) {
+              customers(first: 1, query: $query) {
+                edges {
+                  node {
+                    id
+                    email
+                    note
+                    tags
+                  }
+                }
+              }
+            }
+          `;
+          const findRes = await fetch(`${restBase}/graphql.json`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+            body: JSON.stringify({ query: findQuery, variables: { query: `email:${email}` } }),
+          });
+          const findResult = await findRes.json();
+          const existingCustomer = findResult?.data?.customers?.edges?.[0]?.node;
 
           if (!existingCustomer) {
             // Should not happen, but guard anyway
@@ -457,7 +476,8 @@ export default {
             }
           `;
           const updateInput = {
-            id: `gid://shopify/Customer/${existingCustomer.id}`,
+            // existingCustomer.id is already a GID from GraphQL
+            id: existingCustomer.id,
             note: 'membership-signup',
             metafields,
           };
@@ -484,6 +504,10 @@ export default {
         }
 
         const newCustomer = createResult?.data?.customerCreate?.customer;
+        // Fix 4: null guard — customerCreate returned no customer object
+        if (!newCustomer) {
+          return json({ error: 'shopify_error', message: 'Customer was not returned by Shopify' }, 500);
+        }
         return json({ success: true, customer: { id: newCustomer.id, email: newCustomer.email } });
       } catch (err) {
         return json({ error: err.message }, 500);
@@ -521,18 +545,16 @@ export default {
 
         const getResult = await getRes.json();
 
-        if (getRes.status !== 200) {
-          return json({ error: 'shopify_error', message: JSON.stringify(getResult.errors) }, 422);
+        // Fix 5: use !getRes.ok (covers 4xx/5xx) and safe error message fallback
+        if (!getRes.ok) {
+          return json({ error: 'shopify_error', message: JSON.stringify(getResult.errors || 'Unknown Shopify error') }, 422);
         }
 
+        // We still read the note to build the combined note value, but we never early-return.
+        // Fix 3: removed idempotency early-return — customerUpdate is safe to call repeatedly.
         const existingNote = getResult.customer.note || '';
 
-        // Step 2: Idempotency check — skip update if already marked
-        if (existingNote.startsWith('membership-signup')) {
-          return json({ success: true });
-        }
-
-        // Step 3: Write metafields + membership-signup note via GraphQL customerUpdate
+        // Step 2: Write metafields + membership-signup note via GraphQL customerUpdate (always)
         const metafields = buildMetafields(body);
 
         const updateMutation = `
@@ -546,7 +568,10 @@ export default {
 
         const updateInput = {
           id: `gid://shopify/Customer/${customerId}`,
-          note: 'membership-signup',
+          // Build combined note: prepend membership-signup, preserving any prior content
+          note: existingNote && !existingNote.startsWith('membership-signup')
+            ? `membership-signup\n${existingNote}`
+            : 'membership-signup',
           metafields,
         };
 
