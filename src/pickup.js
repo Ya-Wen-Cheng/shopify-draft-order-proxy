@@ -304,17 +304,28 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
   }
 
   // ── Step 3: Single fetch-then-merge for all line-item-level changes ────────
-  // Includes: weight/partial/remove/found changes, plus cost_price items where priceChanged.
-  // Weight items handle their own price via originalUnitPrice in the GraphQL mutation,
-  // so exclude them from priceChanges to avoid a Map key collision.
+  // Resolutions (weight/partial/remove/found) and price-only changes are kept in
+  // separate Maps so both can be applied to the same line item without either
+  // overwriting the other (a single combined Map would silently drop one when an
+  // item has both a resolution change and a price change).
+  //
+  // Weight items carry their own price via unit_price on the weight change, so
+  // they are excluded from priceChanges to avoid double-applying a price.
   const failedIds = new Set(results.filter(r => !r.success).map(r => r.line_item_id));
   const weightLineItemIds = new Set(lineItemChanges.filter(c => c.type === 'weight').map(c => c.line_item_id));
   const priceChanges = costPriceChanges.filter(
     c => c.priceChanged && !failedIds.has(c.line_item_id) && !weightLineItemIds.has(c.line_item_id)
   );
-  const allLineItemChanges = [...lineItemChanges, ...priceChanges];
+  const resolutionById = new Map(lineItemChanges.map(u => [String(u.line_item_id), u]));
+  const priceById      = new Map(priceChanges.map(u => [String(u.line_item_id), u]));
 
-  if (allLineItemChanges.length > 0) {
+  // Deduplicated set of all items touched in this step (for result reporting)
+  const allChangedItems = new Map();
+  for (const c of [...lineItemChanges, ...priceChanges]) {
+    if (!allChangedItems.has(c.line_item_id)) allChangedItems.set(c.line_item_id, c.title);
+  }
+
+  if (allChangedItems.size > 0) {
     try {
       const getRes = await fetch(`${restBase}/draft_orders/${draftOrderId}.json`, {
         headers: shopifyHeaders(token),
@@ -322,22 +333,23 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
       const getData = await getRes.json();
 
       if (!getRes.ok) {
-        for (const change of allLineItemChanges) {
-          if (!failedIds.has(change.line_item_id)) {
-            results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: JSON.stringify(getData.errors) });
+        for (const [id, title] of allChangedItems) {
+          if (!failedIds.has(id)) {
+            results.push({ line_item_id: id, title, success: false, error: JSON.stringify(getData.errors) });
           }
         }
       } else {
         const currentLineItems = getData.draft_order.line_items || [];
-        const updatesById = new Map(allLineItemChanges.map(u => [String(u.line_item_id), u]));
 
         const mergedLineItems = currentLineItems
           .map(li => {
-            const update = updatesById.get(String(li.id));
-            if (!update) return li;
-            let merged = applyLineItemUpdate(li, update);
-            if (update.type === 'cost_price' && update.priceChanged && merged !== null) {
-              merged = { ...merged, price: String(update.price) };
+            const resUpdate   = resolutionById.get(String(li.id));
+            const priceUpdate = priceById.get(String(li.id));
+            // Apply resolution first (handles weight/partial/remove/found + price calc)
+            let merged = resUpdate ? applyLineItemUpdate(li, resUpdate) : li;
+            // Then overlay price change — skip removed items (merged === null)
+            if (merged !== null && priceUpdate) {
+              merged = { ...merged, price: String(priceUpdate.price) };
             }
             return merged;
           })
@@ -391,24 +403,18 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
 
         if (!gqlRes.ok || (userErrors && userErrors.length > 0)) {
           const errMsg = userErrors?.map(e => e.message).join('; ') || JSON.stringify(gqlData.errors);
-          for (const change of allLineItemChanges) {
-            if (!failedIds.has(change.line_item_id)) {
-              results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: errMsg });
-            }
+          for (const [id, title] of allChangedItems) {
+            if (!failedIds.has(id)) results.push({ line_item_id: id, title, success: false, error: errMsg });
           }
         } else {
-          for (const change of allLineItemChanges) {
-            if (!failedIds.has(change.line_item_id)) {
-              results.push({ line_item_id: change.line_item_id, title: change.title, success: true });
-            }
+          for (const [id, title] of allChangedItems) {
+            if (!failedIds.has(id)) results.push({ line_item_id: id, title, success: true });
           }
         }
       }
     } catch (err) {
-      for (const change of allLineItemChanges) {
-        if (!failedIds.has(change.line_item_id)) {
-          results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: err.message });
-        }
+      for (const [id, title] of allChangedItems) {
+        if (!failedIds.has(id)) results.push({ line_item_id: id, title, success: false, error: err.message });
       }
     }
   }

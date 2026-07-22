@@ -724,6 +724,64 @@ describe('PUT /pickup/complete — batched changes', () => {
     const completeCall = globalThis.fetch.mock.calls.find(([u]) => u.includes('/complete.json'));
     expect(completeCall).toBeUndefined();
   });
+
+  it('partial + price change: applies quantity reduction AND price override', async () => {
+    // Regression: a combined Map previously let cost_price overwrite partial,
+    // losing the quantity reduction.
+    mockFetch();
+    const res = await call(put('/pickup/complete', {
+      draft_order_id: 1,
+      changes: [
+        {
+          type: 'cost_price', line_item_id: 102, title: 'Chicken Breast',
+          cost: null, price: '9.00',
+          product_id: 502, inventory_item_id: null,
+          current_cost: '6.00', current_price: '12.00',
+        },
+        { type: 'partial', line_item_id: 102, title: 'Chicken Breast', quantity: 1 },
+      ],
+    }));
+
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(true);
+
+    const draftUpdateCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/graphql.json') && JSON.parse(o.body).query?.includes('DraftOrderUpdate')
+    );
+    expect(draftUpdateCall).toBeDefined();
+    const li = JSON.parse(draftUpdateCall[1].body).variables.input.lineItems
+      .find(i => i.variantId === 'gid://shopify/ProductVariant/1002');
+    expect(li.quantity).toBe(1);                                    // partial applied
+    expect(li.priceOverride).toEqual({ amount: '9.00', currencyCode: 'USD' }); // price applied
+  });
+
+  it('remove + price change: item is excluded from draft update (not just re-priced)', async () => {
+    // Regression: a combined Map let cost_price overwrite remove, keeping the item.
+    mockFetch();
+    const res = await call(put('/pickup/complete', {
+      draft_order_id: 1,
+      changes: [
+        {
+          type: 'cost_price', line_item_id: 102, title: 'Chicken Breast',
+          cost: null, price: '9.00',
+          product_id: 502, inventory_item_id: null,
+          current_cost: '6.00', current_price: '12.00',
+        },
+        { type: 'remove', line_item_id: 102, title: 'Chicken Breast' },
+      ],
+    }));
+
+    const data = await res.json();
+    expect(data.all_succeeded).toBe(true);
+
+    const draftUpdateCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/graphql.json') && JSON.parse(o.body).query?.includes('DraftOrderUpdate')
+    );
+    expect(draftUpdateCall).toBeDefined();
+    const lineItems = JSON.parse(draftUpdateCall[1].body).variables.input.lineItems;
+    const removedItem = lineItems.find(i => i.variantId === 'gid://shopify/ProductVariant/1002');
+    expect(removedItem).toBeUndefined(); // item must be absent
+  });
 });
 
 // ── PUT /pickup/deliver ───────────────────────────────────────────────────────
