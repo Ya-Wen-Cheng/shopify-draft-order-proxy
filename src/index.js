@@ -24,6 +24,60 @@ import { getPickupData, updateLineItems, completeDraftOrder, markOrderDelivered 
 import { renderPickupPage } from './pickup-template.js';
 import { renderInvoiceHtml } from './invoice-template.js';
 
+// ── Membership helpers ────────────────────────────────────────────────────────
+
+function normalizeUrl(url) {
+  if (!url) return '';
+  if (/^https?:\/\//i.test(url)) return url;
+  return 'https://' + url;
+}
+
+/**
+ * Build a metafields array for the membership namespace.
+ * Only includes fields with a non-empty value.
+ * `ordering_method` is stored as list.single_line_text_field (JSON array string).
+ * `website` is stored as url type.
+ * All others are single_line_text_field.
+ */
+function buildMetafields(body) {
+  const fields = [
+    { key: 'business_type',       value: body.business_type },
+    { key: 'business_subtype',    value: body.business_subtype },
+    { key: 'restaurant_hours',    value: body.restaurant_hours },
+    { key: 'website',             value: normalizeUrl(body.website) },
+    { key: 'delivery_door',       value: body.delivery_door },
+    { key: 'manager_name',        value: body.manager_name },
+    { key: 'manager_phone',       value: body.manager_phone },
+    { key: 'manager_email',       value: body.manager_email },
+    { key: 'chef_name',           value: body.chef_name },
+    { key: 'chef_phone',          value: body.chef_phone },
+    { key: 'chef_email',          value: body.chef_email },
+    { key: 'emergency_name',      value: body.emergency_name },
+    { key: 'emergency_title',     value: body.emergency_title },
+    { key: 'emergency_phone',     value: body.emergency_phone },
+    { key: 'emergency_alt_phone', value: body.emergency_alt_phone },
+    {
+      key: 'ordering_method',
+      value: Array.isArray(body.ordering_method) && body.ordering_method.length > 0
+        ? JSON.stringify(body.ordering_method)
+        : '',
+    },
+  ];
+
+  return fields
+    .filter(f => f.value && f.value.length > 0)
+    .map(f => ({
+      namespace: 'membership',
+      key: f.key,
+      value: f.value,
+      type: f.key === 'ordering_method'
+        ? 'list.single_line_text_field'
+        : f.key === 'website'
+          ? 'url'
+          : 'single_line_text_field',
+    }));
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
@@ -296,17 +350,29 @@ export default {
         return json({ error: 'validation', message: 'Invalid JSON body' }, 400);
       }
 
-      const { first_name, last_name, email, phone, business_name, address = {} } = body;
+      const { first_name, last_name, email, phone, address = {},
+              restaurant_name, restaurant_phone,
+              business_type, business_subtype,
+              emergency_name, emergency_phone,
+              ordering_method } = body;
 
       // Validate required fields
       const missing = [];
-      if (!first_name)        missing.push('first_name');
-      if (!last_name)         missing.push('last_name');
-      if (!email)             missing.push('email');
-      if (!address.address1)  missing.push('address.address1');
-      if (!address.city)      missing.push('address.city');
-      if (!address.province)  missing.push('address.province');
-      if (!address.zip)       missing.push('address.zip');
+      if (!first_name)                                       missing.push('first_name');
+      if (!last_name)                                        missing.push('last_name');
+      if (!email)                                            missing.push('email');
+      if (!phone)                                            missing.push('phone');
+      if (!restaurant_name)                                  missing.push('restaurant_name');
+      if (!restaurant_phone)                                 missing.push('restaurant_phone');
+      if (!business_type)                                    missing.push('business_type');
+      if (!business_subtype)                                 missing.push('business_subtype');
+      if (!emergency_name)                                   missing.push('emergency_name');
+      if (!emergency_phone)                                  missing.push('emergency_phone');
+      if (!Array.isArray(ordering_method) || ordering_method.length === 0) missing.push('ordering_method');
+      if (!address.address1)                                 missing.push('address.address1');
+      if (!address.city)                                     missing.push('address.city');
+      if (!address.province)                                 missing.push('address.province');
+      if (!address.zip)                                      missing.push('address.zip');
 
       if (missing.length > 0) {
         return json({ error: 'validation', message: `Missing required fields: ${missing.join(', ')}` }, 400);
@@ -317,50 +383,110 @@ export default {
         return json({ error: 'validation', message: 'Invalid email address' }, 400);
       }
 
-      const customerPayload = {
-        customer: {
-          first_name,
-          last_name,
-          email,
-          phone: phone || '',
-          note: business_name
-            ? `membership-signup\nBusiness: ${business_name}`
-            : 'membership-signup',
-          addresses: [{
-            first_name,
-            last_name,
-            address1: address.address1,
-            address2: address.address2 || '',
-            city: address.city,
-            province: address.province,
-            zip: address.zip,
-            country: address.country || 'United States',
-            phone: phone || '',
-          }],
-        },
+      const metafields = buildMetafields(body);
+
+      const createMutation = `
+        mutation customerCreate($input: CustomerInput!) {
+          customerCreate(input: $input) {
+            customer { id email }
+            userErrors { field message code }
+          }
+        }
+      `;
+
+      const createInput = {
+        firstName: first_name,
+        lastName: last_name,
+        email,
+        phone,
+        note: 'membership-signup',
+        addresses: [{
+          firstName: first_name,
+          lastName: last_name,
+          company: restaurant_name,
+          address1: address.address1,
+          address2: address.address2 || '',
+          city: address.city,
+          province: address.province,
+          zip: address.zip,
+          countryCode: 'US',
+          phone: restaurant_phone,
+        }],
+        metafields,
       };
 
       try {
-        const res = await fetch(`${restBase}/customers.json`, {
+        const createRes = await fetch(`${restBase}/graphql.json`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-Shopify-Access-Token': token,
           },
-          body: JSON.stringify(customerPayload),
+          body: JSON.stringify({ query: createMutation, variables: { input: createInput } }),
         });
 
-        const result = await res.json();
+        const createResult = await createRes.json();
+        const userErrors = createResult?.data?.customerCreate?.userErrors || [];
 
-        if (res.status === 422 && result.errors?.email) {
-          return json({ error: 'duplicate_email', message: 'An account with this email already exists.' }, 409);
+        // Check for duplicate email error
+        const isDuplicateEmail = userErrors.some(
+          e => e.code === 'CUSTOMER_ALREADY_EXISTS' || (e.field?.includes('email') && /taken|exists/i.test(e.message))
+        );
+
+        if (isDuplicateEmail) {
+          // Find the existing customer by email
+          const searchRes = await fetch(
+            `${restBase}/customers/search.json?query=email:${encodeURIComponent(email)}&limit=1`,
+            { headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token } }
+          );
+          const searchResult = await searchRes.json();
+          const existingCustomer = searchResult?.customers?.[0];
+
+          if (!existingCustomer) {
+            // Should not happen, but guard anyway
+            return json({ error: 'shopify_error', message: 'Duplicate email but customer not found' }, 422);
+          }
+
+          // If already a member, treat as success (idempotent)
+          const tags = (existingCustomer.tags || '').split(',').map(t => t.trim().toLowerCase());
+          // Write metafields + note regardless (handles logged-in non-member case)
+          const updateMutation = `
+            mutation customerUpdate($input: CustomerInput!) {
+              customerUpdate(input: $input) {
+                customer { id }
+                userErrors { field message }
+              }
+            }
+          `;
+          const updateInput = {
+            id: `gid://shopify/Customer/${existingCustomer.id}`,
+            note: 'membership-signup',
+            metafields,
+          };
+          const updateRes = await fetch(`${restBase}/graphql.json`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Shopify-Access-Token': token,
+            },
+            body: JSON.stringify({ query: updateMutation, variables: { input: updateInput } }),
+          });
+          const updateResult = await updateRes.json();
+          const updateErrors = updateResult?.data?.customerUpdate?.userErrors || [];
+          if (updateErrors.length > 0) {
+            return json({ error: updateErrors[0].message, userErrors: updateErrors }, 422);
+          }
+
+          return json({ success: true, customer: { id: existingCustomer.id, email: existingCustomer.email } });
         }
 
-        if (res.status !== 201) {
-          return json({ error: 'shopify_error', message: JSON.stringify(result.errors) }, 422);
+        // Any other userErrors = hard failure
+        if (userErrors.length > 0) {
+          return json({ error: 'shopify_error', message: userErrors[0].message, userErrors }, 422);
         }
 
-        return json({ success: true, customer: { id: result.customer.id, email: result.customer.email } });
+        const newCustomer = createResult?.data?.customerCreate?.customer;
+        return json({ success: true, customer: { id: newCustomer.id, email: newCustomer.email } });
       } catch (err) {
         return json({ error: err.message }, 500);
       }
@@ -387,7 +513,7 @@ export default {
       }
 
       try {
-        // Step 1: GET current customer note to avoid clobbering it
+        // Step 1: GET current customer to check idempotency
         const getRes = await fetch(`${restBase}/customers/${customerId}.json`, {
           headers: {
             'Content-Type': 'application/json',
@@ -403,28 +529,43 @@ export default {
 
         const existingNote = getResult.customer.note || '';
 
-        // Step 2: Idempotency check — skip PUT if already marked
+        // Step 2: Idempotency check — skip update if already marked
         if (existingNote.startsWith('membership-signup')) {
           return json({ success: true });
         }
 
-        // Step 3: Prepend marker to existing note
-        const newNote = existingNote ? `membership-signup\n${existingNote}` : 'membership-signup';
+        // Step 3: Write metafields + membership-signup note via GraphQL customerUpdate
+        const metafields = buildMetafields(body);
 
-        // Step 4: PUT the combined note
-        const putRes = await fetch(`${restBase}/customers/${customerId}.json`, {
-          method: 'PUT',
+        const updateMutation = `
+          mutation customerUpdate($input: CustomerInput!) {
+            customerUpdate(input: $input) {
+              customer { id }
+              userErrors { field message }
+            }
+          }
+        `;
+
+        const updateInput = {
+          id: `gid://shopify/Customer/${customerId}`,
+          note: 'membership-signup',
+          metafields,
+        };
+
+        const updateRes = await fetch(`${restBase}/graphql.json`, {
+          method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'X-Shopify-Access-Token': token,
           },
-          body: JSON.stringify({ customer: { id: customerId, note: newNote } }),
+          body: JSON.stringify({ query: updateMutation, variables: { input: updateInput } }),
         });
 
-        const putResult = await putRes.json();
+        const updateResult = await updateRes.json();
+        const userErrors = updateResult?.data?.customerUpdate?.userErrors || [];
 
-        if (putRes.status !== 200) {
-          return json({ error: 'shopify_error', message: JSON.stringify(putResult.errors) }, 422);
+        if (userErrors.length > 0) {
+          return json({ error: userErrors[0].message, userErrors }, 422);
         }
 
         return json({ success: true });
