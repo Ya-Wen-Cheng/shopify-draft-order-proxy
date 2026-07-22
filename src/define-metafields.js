@@ -11,8 +11,8 @@
  * Requires Node 18+ (native fetch).
  */
 
-const SHOP_DOMAIN = '6kaf1n-gt.myshopify.com';
-const API_VERSION = '2024-01';
+const SHOP_DOMAIN = '6kaf1n-gt.myshopify.com'; // must stay in sync with src/index.js
+const API_VERSION = '2025-04';
 const ENDPOINT    = `https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
 
 // ── Token ────────────────────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ const DEFINITIONS = [
   { key: 'business_type',    name: 'Business Type',                     type: 'single_line_text_field' },
   { key: 'business_subtype', name: 'Business Subcategory',              type: 'single_line_text_field' },
   { key: 'restaurant_hours', name: 'Restaurant Hours',                  type: 'single_line_text_field' },
-  { key: 'website',          name: 'Website',                           type: 'url' },
+  { key: 'website',          name: 'Website',                           type: 'url' }, // Worker must normalize bare domains to https:// before setting this metafield
   { key: 'delivery_door',    name: 'Location of Delivery Door',         type: 'single_line_text_field' },
   { key: 'manager_name',     name: 'Manager Name',                      type: 'single_line_text_field' },
   { key: 'manager_phone',    name: 'Manager Phone',                     type: 'single_line_text_field' },
@@ -42,6 +42,7 @@ const DEFINITIONS = [
   { key: 'emergency_title',  name: 'Emergency Contact Title',           type: 'single_line_text_field' },
   { key: 'emergency_phone',  name: 'Emergency Cell Number',             type: 'single_line_text_field' },
   { key: 'emergency_alt_phone', name: 'Emergency Alternate Number',     type: 'single_line_text_field' },
+  // list of up to 4 values: 'Online' | 'Text' | 'Call' | 'Whatsapp'
   { key: 'ordering_method',  name: 'Preferred Ordering Method',         type: 'list.single_line_text_field' },
 ];
 
@@ -57,6 +58,7 @@ const MUTATION = `
       }
       userErrors {
         field
+        code
         message
       }
     }
@@ -72,6 +74,8 @@ const MUTATION = `
 function isAlreadyExists(userErrors) {
   return userErrors.some(
     (e) =>
+      e.code === 'TAKEN' ||
+      e.code === 'ALREADY_EXISTS' ||
       e.message.toLowerCase().includes('has already been taken') ||
       e.message.toLowerCase().includes('already exists')
   );
