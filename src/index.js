@@ -447,9 +447,7 @@ export default {
             return json({ error: 'shopify_error', message: 'Duplicate email but customer not found' }, 422);
           }
 
-          // If already a member, treat as success (idempotent)
-          const tags = (existingCustomer.tags || '').split(',').map(t => t.trim().toLowerCase());
-          // Write metafields + note regardless (handles logged-in non-member case)
+          // Write metafields + note regardless — handles both duplicate guest and logged-in non-member cases
           const updateMutation = `
             mutation customerUpdate($input: CustomerInput!) {
               customerUpdate(input: $input) {
