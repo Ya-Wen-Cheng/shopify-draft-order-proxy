@@ -286,7 +286,20 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
           throw new Error(JSON.stringify(invData.errors));
         }
 
-        // Only push a result entry here if there's no price change (price change will push it below)
+        // Step 2c: Update variant catalog price if also changed
+        if (change.priceChanged && change.variant_id) {
+          const variantRes = await fetch(`${restBase}/variants/${change.variant_id}.json`, {
+            method: 'PUT',
+            headers: shopifyHeaders(token),
+            body: JSON.stringify({ variant: { id: Number(change.variant_id), price: change.price } }),
+          });
+          if (!variantRes.ok) {
+            const variantData = await variantRes.json();
+            throw new Error(JSON.stringify(variantData.errors));
+          }
+        }
+
+        // Only push a result entry here if there's no price change (price change handled in step 3)
         if (!change.priceChanged) {
           results.push({ line_item_id: change.line_item_id, title: change.title, success: true });
         }
@@ -297,10 +310,24 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
       }
     }
 
-    // Price-only changes (costChanged=false, priceChanged=true) also need a result entry,
-    // but we defer that to the line-item merge step below where we track success/failure.
-    // Items with costChanged=true && priceChanged=true: cost result already pushed above (success),
-    // price merge success will be reflected in the overall results.
+    // Price-only changes (costChanged=false, priceChanged=true): update variant catalog price.
+    // Items with costChanged=true && priceChanged=true already updated catalog price in step 2c.
+    if (!change.costChanged && change.priceChanged && change.variant_id) {
+      try {
+        const variantRes = await fetch(`${restBase}/variants/${change.variant_id}.json`, {
+          method: 'PUT',
+          headers: shopifyHeaders(token),
+          body: JSON.stringify({ variant: { id: Number(change.variant_id), price: change.price } }),
+        });
+        if (!variantRes.ok) {
+          const variantData = await variantRes.json();
+          throw new Error(JSON.stringify(variantData.errors));
+        }
+        // Result deferred to step 3 (line-item merge tracks success/failure for price changes)
+      } catch (err) {
+        results.push({ line_item_id: change.line_item_id, title: change.title, success: false, error: err.message });
+      }
+    }
   }
 
   // ── Step 3: Single fetch-then-merge for all line-item-level changes ────────
@@ -470,7 +497,8 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
     });
   }
 
-  return { status: 200, body: { results, all_succeeded: true, draft_order: completeData.draft_order, order_id: orderId } };
+  const orderName = orderData?.order?.name || null;
+  return { status: 200, body: { results, all_succeeded: true, draft_order: completeData.draft_order, order_id: orderId, order_name: orderName } };
 }
 
 // ── PUT /pickup/deliver ─────────────────────────────────────────────────────

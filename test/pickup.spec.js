@@ -406,6 +406,9 @@ describe('PUT /pickup/complete — batched changes', () => {
       if (url.includes('/inventory_items/') && opts?.method === 'PUT') {
         return new Response(JSON.stringify({ inventory_item: { id: 2001, cost: '3.50' } }), { status: 200 });
       }
+      if (url.includes('/variants/') && opts?.method === 'PUT') {
+        return new Response(JSON.stringify({ variant: { id: 1001, price: '6.00' } }), { status: 200 });
+      }
       if (url.includes('/draft_orders/1.json') && opts?.method === 'PUT') {
         return new Response(JSON.stringify({ draft_order: { id: 1 } }), { status: 200 });
       }
@@ -437,6 +440,7 @@ describe('PUT /pickup/complete — batched changes', () => {
         price: '6.00',
         product_id: 501,
         inventory_item_id: 'gid://shopify/InventoryItem/2001',
+        variant_id: 1001,
         current_cost: '1.25',
         current_price: '5.00',
       }],
@@ -460,7 +464,7 @@ describe('PUT /pickup/complete — batched changes', () => {
     expect(mfBody.variables.metafields[0].value).toBe('pickup');
     expect(mfBody.variables.metafields[0].key).toBe('cost_change_source');
 
-    // inventory item was updated
+    // inventory item (cost) was updated
     const inventoryCall = globalThis.fetch.mock.calls.find(([u, o]) =>
       u.includes('/inventory_items/') && o?.method === 'PUT'
     );
@@ -468,7 +472,15 @@ describe('PUT /pickup/complete — batched changes', () => {
     const invBody = JSON.parse(inventoryCall[1].body);
     expect(invBody.inventory_item.cost).toBe('3.50');
 
-    // price was merged via GraphQL draftOrderUpdate
+    // variant catalog price was updated
+    const variantCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/variants/1001.json') && o?.method === 'PUT'
+    );
+    expect(variantCall).toBeDefined();
+    const variantBody = JSON.parse(variantCall[1].body);
+    expect(variantBody.variant.price).toBe('6.00');
+
+    // price was also applied via GraphQL draftOrderUpdate priceOverride
     const draftUpdateCall = globalThis.fetch.mock.calls.find(([u, o]) =>
       u.includes('/graphql.json') && JSON.parse(o.body).query?.includes('DraftOrderUpdate')
     );
@@ -516,7 +528,7 @@ describe('PUT /pickup/complete — batched changes', () => {
     expect(draftPutCall).toBeUndefined();
   });
 
-  it('price-only change: skips metafield and inventory, merges price into draft order', async () => {
+  it('price-only change: skips metafield and inventory, updates variant catalog price and draft order', async () => {
     mockFetch();
     const res = await call(put('/pickup/complete', {
       draft_order_id: 1,
@@ -528,6 +540,7 @@ describe('PUT /pickup/complete — batched changes', () => {
         price: '6.00',
         product_id: 501,
         inventory_item_id: 'gid://shopify/InventoryItem/2001',
+        variant_id: 1001,
         current_cost: '1.25',
         current_price: '5.00',
       }],
@@ -548,7 +561,15 @@ describe('PUT /pickup/complete — batched changes', () => {
     );
     expect(inventoryCall).toBeUndefined();
 
-    // price merged via GraphQL draftOrderUpdate
+    // variant catalog price was updated
+    const variantCall = globalThis.fetch.mock.calls.find(([u, o]) =>
+      u.includes('/variants/1001.json') && o?.method === 'PUT'
+    );
+    expect(variantCall).toBeDefined();
+    const variantBody = JSON.parse(variantCall[1].body);
+    expect(variantBody.variant.price).toBe('6.00');
+
+    // price also applied via GraphQL draftOrderUpdate priceOverride
     const draftUpdateCall = globalThis.fetch.mock.calls.find(([u, o]) =>
       u.includes('/graphql.json') && JSON.parse(o.body).query?.includes('DraftOrderUpdate')
     );

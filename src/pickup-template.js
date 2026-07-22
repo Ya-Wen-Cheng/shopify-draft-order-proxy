@@ -75,6 +75,7 @@ export function renderPickupPage() {
   .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 200; display: flex; align-items: center; justify-content: center; }
   .modal-box { background: #fff; border-radius: 12px; padding: 24px 20px; margin: 16px; max-width: 320px; width: 100%; box-shadow: 0 4px 24px rgba(0,0,0,0.2); }
   .modal-msg { font-size: 15px; color: #111; margin-bottom: 20px; line-height: 1.5; }
+  .modal-success-icon { font-size: 48px; text-align: center; margin-bottom: 12px; }
   .modal-actions { display: flex; gap: 10px; }
   .btn-modal-confirm { flex: 1; background: #22c55e; color: #fff; border: none; border-radius: 6px; padding: 12px; font-size: 15px; font-weight: 600; cursor: pointer; }
   .btn-modal-cancel { flex: 1; background: #e5e7eb; color: #374151; border: none; border-radius: 6px; padding: 12px; font-size: 15px; cursor: pointer; }
@@ -188,7 +189,7 @@ function getItemState(orderId, li) {
       resolved: false,
       resolvedType: null,
       hasWeight: !!li.has_weight_tag,
-      weightMode: 'per_item', // 'per_item' | 'same_weight' | 'bulk'
+      weightMode: 'bulk', // 'per_item' | 'same_weight' | 'bulk'
       weightCount: li.quantity,
       weights: [''],
       sameWeightValue: '',
@@ -300,6 +301,7 @@ async function loadData() {
         completed: false,
         completing: false,
         realOrderId: null,
+        realOrderName: null,
         results: [],
         order: order,
       };
@@ -356,14 +358,14 @@ function saveWeight(orderId, li, itemState) {
   itemState.resolvedType = 'weight';
   itemState.confirmedWeights = weights;
   itemState.weightExpanded = false;
-  rerender();
+  rerender(li.id);
 }
 
 function markResolved(orderId, li, itemState, type, quantity) {
   itemState.resolved = true;
   itemState.resolvedType = type;
   if (type === 'partial') itemState.resolvedQuantity = quantity;
-  rerender();
+  rerender(li.id);
 }
 
 function confirmCostPrice(orderId, li, itemState, newCost, newPrice) {
@@ -374,13 +376,17 @@ function confirmCostPrice(orderId, li, itemState, newCost, newPrice) {
   itemState.newPrice = (parsedPrice !== null && parsedPrice !== parseFloat(itemState.currentPrice)) ? parsedPrice : null;
   itemState.costPriceConfirmed = itemState.newCost !== null || itemState.newPrice !== null;
   itemState.costPriceExpanded = false;
-  rerender();
+  rerender(li.id);
 }
 
-function rerender() {
+function rerender(scrollToItemId) {
   var orders = Object.keys(state).map(function (id) { return state[id].order; });
   render(orders);
   saveStateToStorage();
+  if (scrollToItemId) {
+    var el = document.querySelector('[data-li-id="' + scrollToItemId + '"]');
+    if (el) el.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  }
 }
 
 // ─── complete order (batched) ───────────────────────────────────────────────
@@ -406,6 +412,7 @@ async function completeOrder(order) {
         price: priceActuallyChanged ? String(item.newPrice) : null,
         product_id: item.productId,
         inventory_item_id: item.inventoryItemId,
+        variant_id: item.variantId,
         current_cost: item.currentCost,
         current_price: item.currentPrice,
       });
@@ -439,7 +446,12 @@ async function completeOrder(order) {
     state[order.id].completing = false;
     state[order.id].completed = data.all_succeeded;
     state[order.id].realOrderId = data.order_id || null;
+    state[order.id].realOrderName = data.order_name || null;
     state[order.id].results = data.results || [];
+    if (data.all_succeeded) {
+      var orderLabel = data.order_name || ('#' + data.order_id) || 'Order';
+      await showSuccess(orderLabel + ' created successfully!', order.id, data.order_id || null);
+    }
   } catch (err) {
     state[order.id].completing = false;
     state[order.id].results = [{ success: false, title: 'Network error: ' + err.message }];
@@ -681,6 +693,7 @@ function renderOrderCard(container, order, orderState) {
   order.line_items.forEach(function (li) {
     var itemState = getItemState(order.id, li);
     var row = el('div', 'line-item' + (isFullyResolved(itemState) ? ' resolved' : ''));
+    row.setAttribute('data-li-id', li.id);
 
     // title
     row.appendChild(el('div', 'li-title',
@@ -835,18 +848,7 @@ function renderOrderCard(container, order, orderState) {
     card.appendChild(pbWrap);
   } else if (orderState.completed) {
     var allOk = !orderState.results.some(function (r) { return !r.success; });
-    if (allOk) {
-      var pbWrapDone = el('div', 'progress-bar-wrap');
-      pbWrapDone.appendChild(el('div', 'progress-bar-fill done'));
-      card.appendChild(pbWrapDone);
-      card.appendChild(el('div', 'result-success', '✅ Order completed.'));
-      var realId = getRealOrderId(order, orderState);
-      if (realId) {
-        var printBtn = el('button', 'btn-print', 'Print Invoice');
-        printBtn.addEventListener('click', function () { printInvoice(order.id, realId); });
-        card.appendChild(printBtn);
-      }
-    } else {
+    if (!allOk) {
       var succeeded = orderState.results.filter(function (r) { return r.success; }).length;
       var failed = orderState.results.filter(function (r) { return !r.success; });
       card.appendChild(el('div', 'result-mixed', '✅ ' + succeeded + '/' + orderState.results.length + ' items updated'));
@@ -884,6 +886,42 @@ function showConfirm(message, confirmLabel) {
     });
     actions.appendChild(cancelBtn);
     actions.appendChild(confirmBtn);
+    box.appendChild(actions);
+    backdrop.appendChild(box);
+    document.body.appendChild(backdrop);
+  });
+}
+
+function showSuccess(message, draftOrderId, realOrderId) {
+  return new Promise(function (resolve) {
+    var backdrop = el('div', 'modal-backdrop');
+    var box = el('div', 'modal-box');
+    var icon = el('div', 'modal-success-icon', '✅');
+    var msg = el('div', 'modal-msg', message);
+    var actions = el('div', 'modal-actions');
+    function goToList() {
+      document.body.removeChild(backdrop);
+      resolve();
+      currentView = 'list';
+      selectedOrderId = null;
+      sessionStorage.removeItem(SESSION_VIEW_KEY);
+      rerender();
+      window.scrollTo(0, 0);
+      loadData();
+    }
+    if (realOrderId) {
+      var printBtn = el('button', 'btn-modal-cancel', '🖨 Print Invoice');
+      printBtn.addEventListener('click', function () {
+        printInvoice(draftOrderId, realOrderId);
+        goToList();
+      });
+      actions.appendChild(printBtn);
+    }
+    var okBtn = el('button', 'btn-modal-confirm', 'OK');
+    okBtn.addEventListener('click', goToList);
+    actions.appendChild(okBtn);
+    box.appendChild(icon);
+    box.appendChild(msg);
     box.appendChild(actions);
     backdrop.appendChild(box);
     document.body.appendChild(backdrop);
@@ -1074,7 +1112,7 @@ function renderDetail(root, orders, orderId) {
   if (!order) {
     var err = el('div', 'card', 'Order not found.');
     var back = el('button', 'btn btn-back', '← Back');
-    back.addEventListener('click', function () { currentView = 'list'; selectedOrderId = null; rerender(); });
+    back.addEventListener('click', function () { currentView = 'list'; selectedOrderId = null; sessionStorage.removeItem(SESSION_VIEW_KEY); loadData(); });
     root.appendChild(back);
     root.appendChild(err);
     return;
@@ -1087,7 +1125,7 @@ function renderDetail(root, orders, orderId) {
     selectedOrderId = null;
     sessionStorage.removeItem(SESSION_VIEW_KEY);
     history.pushState(null, '', '#');
-    rerender();
+    loadData();
   });
   root.appendChild(backBtn);
 
