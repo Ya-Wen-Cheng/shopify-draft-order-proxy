@@ -534,6 +534,18 @@ export default {
         return json({ error: 'validation', message: 'customer_id must be a positive integer' }, 400);
       }
 
+      // Validate business-critical required fields (same as signup)
+      const activateMissing = [];
+      if (!body.business_type)    activateMissing.push('business_type');
+      if (!body.business_subtype) activateMissing.push('business_subtype');
+      if (!body.emergency_name)   activateMissing.push('emergency_name');
+      if (!body.emergency_phone)  activateMissing.push('emergency_phone');
+      if (!Array.isArray(body.ordering_method) || body.ordering_method.length === 0) activateMissing.push('ordering_method');
+
+      if (activateMissing.length > 0) {
+        return json({ error: 'validation', message: `Missing required fields: ${activateMissing.join(', ')}` }, 400);
+      }
+
       try {
         // Step 1: GET current customer to check idempotency
         const getRes = await fetch(`${restBase}/customers/${customerId}.json`, {
