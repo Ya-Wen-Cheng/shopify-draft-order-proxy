@@ -76,9 +76,7 @@ function buildMetafields(body) {
       value: f.value,
       type: f.key === 'ordering_method'
         ? 'list.single_line_text_field'
-        : f.key === 'website'
-          ? 'url'
-          : 'single_line_text_field',
+        : 'single_line_text_field',
     }));
 }
 
@@ -360,6 +358,8 @@ export default {
               emergency_name, emergency_phone,
               ordering_method } = body;
 
+      const memberTags = ['member'];
+
       // Validate required fields
       const missing = [];
       if (!first_name)                                       missing.push('first_name');
@@ -393,7 +393,7 @@ export default {
         mutation customerCreate($input: CustomerInput!) {
           customerCreate(input: $input) {
             customer { id email }
-            userErrors { field message code }
+            userErrors { field message }
           }
         }
       `;
@@ -404,6 +404,7 @@ export default {
         email,
         phone,
         note: 'membership-signup',
+        tags: memberTags,
         addresses: [{
           firstName: first_name,
           lastName: last_name,
@@ -430,26 +431,25 @@ export default {
         });
 
         const createResult = await createRes.json();
+
+        // Top-level GraphQL errors (network/schema errors, not userErrors)
+        if (createResult?.errors?.length) {
+          return json({ success: false, error: createResult.errors[0].message }, 500);
+        }
+
         const userErrors = createResult?.data?.customerCreate?.userErrors || [];
 
         // Check for duplicate email error
         const isDuplicateEmail = userErrors.some(
-          e => e.code === 'CUSTOMER_ALREADY_EXISTS' || (e.field?.includes('email') && /taken|exists/i.test(e.message))
+          e => e.field?.includes('email') && /taken|exists|already/i.test(e.message)
         );
 
         if (isDuplicateEmail) {
-          // Fix 2: Find the existing customer by email via GraphQL (replaces REST customers/search.json)
+          // Find existing customer
           const findQuery = `
             query findCustomer($query: String!) {
               customers(first: 1, query: $query) {
-                edges {
-                  node {
-                    id
-                    email
-                    note
-                    tags
-                  }
-                }
+                edges { node { id email note tags } }
               }
             }
           `;
@@ -462,12 +462,13 @@ export default {
           const existingCustomer = findResult?.data?.customers?.edges?.[0]?.node;
 
           if (!existingCustomer) {
-            // Should not happen, but guard anyway
             return json({ error: 'shopify_error', message: 'Duplicate email but customer not found' }, 422);
           }
 
-          // Write metafields + note regardless — handles both duplicate guest and logged-in non-member cases
-          const updateMutation = `
+          // Overwrite customer info + metafields, preserve existing tags
+          const existingTags = existingCustomer.tags || [];
+          const mergedTags = [...new Set([...existingTags, ...memberTags])];
+          const dupUpdateMutation = `
             mutation customerUpdate($input: CustomerInput!) {
               customerUpdate(input: $input) {
                 customer { id }
@@ -475,25 +476,59 @@ export default {
               }
             }
           `;
-          const updateInput = {
-            // existingCustomer.id is already a GID from GraphQL
-            id: existingCustomer.id,
-            note: 'membership-signup',
-            metafields,
-          };
-          const updateRes = await fetch(`${restBase}/graphql.json`, {
+          const dupUpdateRes = await fetch(`${restBase}/graphql.json`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Shopify-Access-Token': token,
-            },
-            body: JSON.stringify({ query: updateMutation, variables: { input: updateInput } }),
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+            body: JSON.stringify({
+              query: dupUpdateMutation,
+              variables: { input: {
+                id: existingCustomer.id,
+                firstName: first_name,
+                lastName: last_name,
+                phone,
+                note: 'membership-signup',
+                tags: mergedTags,
+                metafields,
+              }},
+            }),
           });
-          const updateResult = await updateRes.json();
-          const updateErrors = updateResult?.data?.customerUpdate?.userErrors || [];
-          if (updateErrors.length > 0) {
-            return json({ error: updateErrors[0].message, userErrors: updateErrors }, 422);
+          const dupUpdateResult = await dupUpdateRes.json();
+          const dupErrors = dupUpdateResult?.data?.customerUpdate?.userErrors || [];
+          if (dupErrors.length > 0) {
+            return json({ error: dupErrors[0].message, userErrors: dupErrors }, 422);
           }
+
+          // Append restaurant address (do not overwrite existing addresses)
+          const addAddressMutation = `
+            mutation customerAddressCreate($customerId: ID!, $address: MailingAddressInput!) {
+              customerAddressCreate(customerId: $customerId, address: $address) {
+                customerAddress { id }
+                userErrors { field message }
+              }
+            }
+          `;
+          await fetch(`${restBase}/graphql.json`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+            body: JSON.stringify({
+              query: addAddressMutation,
+              variables: {
+                customerId: existingCustomer.id,
+                address: {
+                  firstName: first_name,
+                  lastName: last_name,
+                  company: restaurant_name,
+                  address1: address.address1,
+                  address2: address.address2 || '',
+                  city: address.city,
+                  provinceCode: address.province,
+                  zip: address.zip,
+                  countryCode: 'US',
+                  phone: restaurant_phone,
+                },
+              },
+            }),
+          });
 
           return json({ success: true, customer: { id: existingCustomer.id, email: existingCustomer.email } });
         }
@@ -524,6 +559,7 @@ export default {
       }
 
       const { customer_id } = body;
+      const activateTags = ['member'];
 
       // Validate customer_id — check presence first, then coerce and validate
       if (customer_id == null || customer_id === '') {
@@ -584,6 +620,7 @@ export default {
           note: existingNote && !existingNote.startsWith('membership-signup')
             ? `membership-signup\n${existingNote}`
             : 'membership-signup',
+          tags: activateTags,
           metafields,
         };
 
