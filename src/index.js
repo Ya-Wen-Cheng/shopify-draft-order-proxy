@@ -507,7 +507,7 @@ export default {
               }
             }
           `;
-          await fetch(`${restBase}/graphql.json`, {
+          const dupAddrRes = await fetch(`${restBase}/graphql.json`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
             body: JSON.stringify({
@@ -529,6 +529,26 @@ export default {
               },
             }),
           });
+          const dupAddrResult = await dupAddrRes.json();
+          const dupAddressId = dupAddrResult?.data?.customerAddressCreate?.customerAddress?.id;
+          if (dupAddressId) {
+            const setDefaultMutation = `
+              mutation customerDefaultAddressUpdate($customerId: ID!, $addressId: ID!) {
+                customerDefaultAddressUpdate(customerId: $customerId, addressId: $addressId) {
+                  customer { id }
+                  userErrors { field message }
+                }
+              }
+            `;
+            await fetch(`${restBase}/graphql.json`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+              body: JSON.stringify({
+                query: setDefaultMutation,
+                variables: { customerId: existingCustomer.id, addressId: dupAddressId },
+              }),
+            });
+          }
 
           return json({ success: true, customer: { id: existingCustomer.id, email: existingCustomer.email } });
         }
@@ -661,7 +681,7 @@ export default {
             }
           }
         `;
-        await fetch(`${restBase}/graphql.json`, {
+        const addAddrRes = await fetch(`${restBase}/graphql.json`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
           body: JSON.stringify({
@@ -669,20 +689,45 @@ export default {
             variables: {
               customerId: `gid://shopify/Customer/${customerId}`,
               address: {
-                firstName:   body.first_name,
-                lastName:    body.last_name,
-                company:     body.restaurant_name,
-                address1:    addr.address1,
-                address2:    addr.address2 || '',
-                city:        addr.city,
+                firstName:    body.first_name,
+                lastName:     body.last_name,
+                company:      body.restaurant_name,
+                address1:     addr.address1,
+                address2:     addr.address2 || '',
+                city:         addr.city,
                 provinceCode: addr.province,
-                zip:         addr.zip,
-                countryCode: 'US',
-                phone:       body.restaurant_phone,
+                zip:          addr.zip,
+                countryCode:  'US',
+                phone:        body.restaurant_phone,
               },
             },
           }),
         });
+        const addAddrResult = await addAddrRes.json();
+        const newAddressId = addAddrResult?.data?.customerAddressCreate?.customerAddress?.id;
+
+        // Step 4: Set the new address as default so customer.default_address.company is populated
+        if (newAddressId) {
+          const setDefaultMutation = `
+            mutation customerDefaultAddressUpdate($customerId: ID!, $addressId: ID!) {
+              customerDefaultAddressUpdate(customerId: $customerId, addressId: $addressId) {
+                customer { id }
+                userErrors { field message }
+              }
+            }
+          `;
+          await fetch(`${restBase}/graphql.json`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+            body: JSON.stringify({
+              query: setDefaultMutation,
+              variables: {
+                customerId: `gid://shopify/Customer/${customerId}`,
+                addressId:  newAddressId,
+              },
+            }),
+          });
+        }
 
         return json({ success: true });
       } catch (err) {
