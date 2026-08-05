@@ -570,13 +570,22 @@ export default {
         return json({ error: 'validation', message: 'customer_id must be a positive integer' }, 400);
       }
 
-      // Validate business-critical required fields (same as signup)
+      // Validate required fields — same set as signup
       const activateMissing = [];
-      if (!body.business_type)    activateMissing.push('business_type');
-      if (!body.business_subtype) activateMissing.push('business_subtype');
-      if (!body.emergency_name)   activateMissing.push('emergency_name');
-      if (!body.emergency_phone)  activateMissing.push('emergency_phone');
+      if (!body.first_name)        activateMissing.push('first_name');
+      if (!body.last_name)         activateMissing.push('last_name');
+      if (!body.restaurant_name)   activateMissing.push('restaurant_name');
+      if (!body.restaurant_phone)  activateMissing.push('restaurant_phone');
+      if (!body.business_type)     activateMissing.push('business_type');
+      if (!body.business_subtype)  activateMissing.push('business_subtype');
+      if (!body.emergency_name)    activateMissing.push('emergency_name');
+      if (!body.emergency_phone)   activateMissing.push('emergency_phone');
       if (!Array.isArray(body.ordering_method) || body.ordering_method.length === 0) activateMissing.push('ordering_method');
+      const addr = body.address || {};
+      if (!addr.address1)          activateMissing.push('address.address1');
+      if (!addr.city)              activateMissing.push('address.city');
+      if (!addr.province)          activateMissing.push('address.province');
+      if (!addr.zip)               activateMissing.push('address.zip');
 
       if (activateMissing.length > 0) {
         return json({ error: 'validation', message: `Missing required fields: ${activateMissing.join(', ')}` }, 400);
@@ -616,6 +625,9 @@ export default {
 
         const updateInput = {
           id: `gid://shopify/Customer/${customerId}`,
+          firstName: body.first_name,
+          lastName:  body.last_name,
+          phone:     body.phone,
           // Build combined note: prepend membership-signup, preserving any prior content
           note: existingNote && !existingNote.startsWith('membership-signup')
             ? `membership-signup\n${existingNote}`
@@ -639,6 +651,38 @@ export default {
         if (userErrors.length > 0) {
           return json({ error: userErrors[0].message, userErrors }, 422);
         }
+
+        // Step 3: Add restaurant address (OTP accounts start with no address)
+        const addAddressMutation = `
+          mutation customerAddressCreate($customerId: ID!, $address: MailingAddressInput!) {
+            customerAddressCreate(customerId: $customerId, address: $address) {
+              customerAddress { id }
+              userErrors { field message }
+            }
+          }
+        `;
+        await fetch(`${restBase}/graphql.json`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+          body: JSON.stringify({
+            query: addAddressMutation,
+            variables: {
+              customerId: `gid://shopify/Customer/${customerId}`,
+              address: {
+                firstName:   body.first_name,
+                lastName:    body.last_name,
+                company:     body.restaurant_name,
+                address1:    addr.address1,
+                address2:    addr.address2 || '',
+                city:        addr.city,
+                provinceCode: addr.province,
+                zip:         addr.zip,
+                countryCode: 'US',
+                phone:       body.restaurant_phone,
+              },
+            },
+          }),
+        });
 
         return json({ success: true });
       } catch (err) {
