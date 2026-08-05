@@ -39,7 +39,15 @@ export function renderInvoiceHtml(order) {
 <meta charset="utf-8">
 <title>Invoice ${escapeHtml(order.name)}</title>
 <style>
-  @page { size: 8.5in 11in; margin: 0.5in; }
+  @page {
+    size: 8.5in 11in;
+    margin: 0.5in;
+    @bottom-center {
+      content: "Page " counter(page) " of " counter(pages);
+      font-size: 10px;
+      color: #888;
+    }
+  }
   body { font-family: Arial, Helvetica, sans-serif; color: #111; }
   h1 { font-size: 20px; margin-bottom: 4px; }
   .meta { color: #555; font-size: 13px; margin-bottom: 16px; }
@@ -48,8 +56,11 @@ export function renderInvoiceHtml(order) {
   .weight-note { font-size: 11px; color: #555; }
   .summary { margin-top: 16px; width: 260px; margin-left: auto; }
   .summary td { border: none; padding: 4px 8px; }
-  .signature { margin-top: 60px; page-break-inside: avoid; }
+  .signature { margin-top: 60px; }
   .signature-line { border-top: 1px solid #333; width: 300px; margin-top: 40px; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+  .invoice-footer { page-break-inside: avoid; }
   .print-btn { margin-bottom: 16px; }
   @media print {
     .no-print { display: none; }
@@ -82,16 +93,18 @@ export function renderInvoiceHtml(order) {
     <tbody>${lineItemsHtml}</tbody>
   </table>
 
-  <table class="summary">
-    <tr><td>Subtotal</td><td>$${escapeHtml(order.subtotal_price || '0.00')}</td></tr>
-    <tr><td>Delivery</td><td>$${deliveryFee}</td></tr>
-    <tr><td>Tax</td><td>$${escapeHtml(order.total_tax || '0.00')}</td></tr>
-    <tr><td><strong>Total</strong></td><td><strong>$${escapeHtml(order.total_price || '0.00')}</strong></td></tr>
-  </table>
+  <div class="invoice-footer">
+    <table class="summary">
+      <tr><td>Subtotal</td><td>$${escapeHtml(order.subtotal_price || '0.00')}</td></tr>
+      <tr><td>Delivery</td><td>$${deliveryFee}</td></tr>
+      <tr><td>Tax</td><td>$${escapeHtml(order.total_tax || '0.00')}</td></tr>
+      <tr><td><strong>Total</strong></td><td><strong>$${escapeHtml(order.total_price || '0.00')}</strong></td></tr>
+    </table>
 
-  <div class="signature">
-    <div class="signature-line"></div>
-    <div>Customer Signature</div>
+    <div class="signature">
+      <div class="signature-line"></div>
+      <div>Customer Signature</div>
+    </div>
   </div>
 </body>
 </html>`;
