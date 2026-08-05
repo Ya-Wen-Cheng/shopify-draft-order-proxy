@@ -405,6 +405,7 @@ export default {
         phone,
         note: 'membership-signup',
         tags: memberTags,
+        taxExempt: true,
         addresses: [{
           firstName: first_name,
           lastName: last_name,
@@ -488,6 +489,7 @@ export default {
                 phone,
                 note: 'membership-signup',
                 tags: mergedTags,
+                taxExempt: true,
                 metafields,
               }},
             }),
@@ -634,6 +636,7 @@ export default {
             ? `membership-signup\n${existingNote}`
             : 'membership-signup',
           tags: activateTags,
+          taxExempt: true,
           metafields,
         };
 
@@ -646,8 +649,21 @@ export default {
           body: JSON.stringify({ query: updateMutation, variables: { input: updateInput } }),
         });
 
-        const updateResult = await updateRes.json();
-        const userErrors = updateResult?.data?.customerUpdate?.userErrors || [];
+        let updateResult = await updateRes.json();
+        let userErrors = updateResult?.data?.customerUpdate?.userErrors || [];
+
+        // If phone is taken by another account, retry without it — phone stays unchanged
+        const phoneTaken = userErrors.some(e => /phone/i.test(e.field?.join?.('') ?? '') && /taken/i.test(e.message));
+        if (phoneTaken) {
+          const { phone: _omit, ...updateInputWithoutPhone } = updateInput;
+          const retryRes = await fetch(`${restBase}/graphql.json`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+            body: JSON.stringify({ query: updateMutation, variables: { input: updateInputWithoutPhone } }),
+          });
+          updateResult = await retryRes.json();
+          userErrors = updateResult?.data?.customerUpdate?.userErrors || [];
+        }
 
         if (userErrors.length > 0) {
           return json({ error: userErrors[0].message, userErrors }, 422);
