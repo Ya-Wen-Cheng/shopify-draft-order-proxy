@@ -39,15 +39,9 @@ export function renderInvoiceHtml(order) {
 <meta charset="utf-8">
 <title>Invoice ${escapeHtml(order.name)}</title>
 <style>
-  @page {
-    size: 8.5in 11in;
-    margin: 0.5in;
-    @bottom-center {
-      content: "Page " counter(page) " of " counter(pages);
-      font-size: 10px;
-      color: #888;
-    }
-  }
+  @page { size: 8.5in 11in; margin: 0.5in; }
+  .page-numbers { display: none; position: fixed; bottom: 0.3in; width: 100%; text-align: center; font-size: 10px; color: #888; }
+  @media print { .page-numbers { display: block; } }
   body { font-family: Arial, Helvetica, sans-serif; color: #111; }
   h1 { font-size: 20px; margin-bottom: 4px; }
   .meta { color: #555; font-size: 13px; margin-bottom: 16px; }
@@ -68,6 +62,7 @@ export function renderInvoiceHtml(order) {
 </style>
 </head>
 <body>
+  <div class="page-numbers" id="page-numbers"></div>
   <button class="print-btn no-print" onclick="window.print()">Print</button>
   <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
     <div>
@@ -106,6 +101,18 @@ export function renderInvoiceHtml(order) {
       <div>Customer Signature</div>
     </div>
   </div>
+<script>
+  function updatePageNumbers() {
+    var body = document.body;
+    var html = document.documentElement;
+    var pageHeight = 11 * 96 - 2 * 0.5 * 96; // 11in page minus 0.5in top+bottom margins (96dpi)
+    var totalHeight = Math.max(body.scrollHeight, body.offsetHeight, html.clientHeight, html.scrollHeight, html.offsetHeight);
+    var totalPages = Math.ceil(totalHeight / pageHeight) || 1;
+    var el = document.getElementById('page-numbers');
+    if (el) el.textContent = 'Page 1 of ' + totalPages;
+  }
+  window.addEventListener('beforeprint', updatePageNumbers);
+</script>
 </body>
 </html>`;
 }
