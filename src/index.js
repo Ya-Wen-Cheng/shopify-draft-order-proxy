@@ -167,6 +167,27 @@ export default {
     const id     = url.searchParams.get('id');
     const action = url.searchParams.get('action');
 
+    // ── GET /?action=check-phone — check if phone is already on a customer ──
+    if (request.method === 'GET' && action === 'check-phone') {
+      const phone = url.searchParams.get('phone');
+      if (!phone) return json({ error: 'phone param required' }, 400);
+      const query = `
+        query checkPhone($q: String!) {
+          customers(first: 1, query: $q) {
+            edges { node { id } }
+          }
+        }
+      `;
+      const res = await fetch(`${restBase}/graphql.json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+        body: JSON.stringify({ query, variables: { q: `phone:${phone}` } }),
+      });
+      const result = await res.json();
+      const taken = (result?.data?.customers?.edges?.length ?? 0) > 0;
+      return json({ taken });
+    }
+
     // ── POST /webhook/cost-update — Shopify inventory_items/update ─────
     if (request.method === 'POST' && url.pathname === '/webhook/cost-update') {
       const rawBody   = await request.text();
@@ -471,7 +492,27 @@ export default {
           return json({ success: false, error: createResult.errors[0].message }, 500);
         }
 
-        const userErrors = createResult?.data?.customerCreate?.userErrors || [];
+        let userErrors = createResult?.data?.customerCreate?.userErrors || [];
+
+        // If phone is taken, retry without it — same behaviour as activate-membership
+        const isPhoneTakenOnCreate = userErrors.some(
+          e => /phone/i.test(e.field?.join?.('') ?? '') && /taken/i.test(e.message)
+        );
+        let phoneSkipped = false;
+        if (isPhoneTakenOnCreate) {
+          phoneSkipped = true;
+          const { phone: _omit, ...createInputWithoutPhone } = createInput;
+          const retryRes = await fetch(`${restBase}/graphql.json`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+            body: JSON.stringify({ query: createMutation, variables: { input: createInputWithoutPhone } }),
+          });
+          const retryResult = await retryRes.json();
+          if (retryResult?.errors?.length) {
+            return json({ success: false, error: retryResult.errors[0].message }, 500);
+          }
+          userErrors = retryResult?.data?.customerCreate?.userErrors || [];
+        }
 
         // Check for duplicate email error
         const isDuplicateEmail = userErrors.some(
@@ -567,7 +608,7 @@ export default {
           });
 
           await updateEmailMarketing(restBase, token, existingCustomer.id, body.accepts_marketing);
-          return json({ success: true, customer: { id: existingCustomer.id, email: existingCustomer.email } });
+          return json({ success: true, phone_skipped: phoneSkipped, customer: { id: existingCustomer.id, email: existingCustomer.email } });
         }
 
         // Any other userErrors = hard failure
@@ -581,7 +622,7 @@ export default {
           return json({ error: 'shopify_error', message: 'Customer was not returned by Shopify' }, 500);
         }
         await updateEmailMarketing(restBase, token, newCustomer.id, body.accepts_marketing);
-        return json({ success: true, customer: { id: newCustomer.id, email: newCustomer.email } });
+        return json({ success: true, phone_skipped: phoneSkipped, customer: { id: newCustomer.id, email: newCustomer.email } });
       } catch (err) {
         return json({ error: err.message }, 500);
       }
@@ -739,7 +780,7 @@ export default {
 
         await updateEmailMarketing(restBase, token, `gid://shopify/Customer/${customerId}`, body.accepts_marketing);
 
-        return json({ success: true });
+        return json({ success: true, phone_skipped: phoneTaken });
       } catch (err) {
         return json({ error: err.message }, 500);
       }
