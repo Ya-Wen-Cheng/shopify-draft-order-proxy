@@ -80,6 +80,39 @@ function buildMetafields(body) {
     }));
 }
 
+async function updateEmailMarketing(restBase, token, customerGid, acceptsMarketing) {
+  const mutation = `
+    mutation customerEmailMarketingConsentUpdate(
+      $customerId: ID!
+      $marketingState: CustomerEmailMarketingState!
+      $marketingOptInLevel: CustomerMarketingOptInLevel!
+    ) {
+      customerEmailMarketingConsentUpdate(input: {
+        customerId: $customerId
+        emailMarketingConsent: {
+          marketingState: $marketingState
+          marketingOptInLevel: $marketingOptInLevel
+        }
+      }) {
+        customer { id }
+        userErrors { field message code }
+      }
+    }
+  `;
+  await fetch(`${restBase}/graphql.json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+    body: JSON.stringify({
+      query: mutation,
+      variables: {
+        customerId: customerGid,
+        marketingState: acceptsMarketing ? 'SUBSCRIBED' : 'UNSUBSCRIBED',
+        marketingOptInLevel: 'SINGLE_OPT_IN',
+      },
+    }),
+  });
+}
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
@@ -533,6 +566,7 @@ export default {
             }),
           });
 
+          await updateEmailMarketing(restBase, token, existingCustomer.id, body.accepts_marketing);
           return json({ success: true, customer: { id: existingCustomer.id, email: existingCustomer.email } });
         }
 
@@ -546,6 +580,7 @@ export default {
         if (!newCustomer) {
           return json({ error: 'shopify_error', message: 'Customer was not returned by Shopify' }, 500);
         }
+        await updateEmailMarketing(restBase, token, newCustomer.id, body.accepts_marketing);
         return json({ success: true, customer: { id: newCustomer.id, email: newCustomer.email } });
       } catch (err) {
         return json({ error: err.message }, 500);
@@ -701,6 +736,8 @@ export default {
             },
           }),
         });
+
+        await updateEmailMarketing(restBase, token, `gid://shopify/Customer/${customerId}`, body.accepts_marketing);
 
         return json({ success: true });
       } catch (err) {
