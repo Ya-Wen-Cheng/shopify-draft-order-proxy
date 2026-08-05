@@ -412,7 +412,7 @@ export default {
           address1: address.address1,
           address2: address.address2 || '',
           city: address.city,
-          provinceCode: address.province,
+          province: address.province,
           zip: address.zip,
           countryCode: 'US',
           phone: restaurant_phone,
@@ -498,22 +498,23 @@ export default {
             return json({ error: dupErrors[0].message, userErrors: dupErrors }, 422);
           }
 
-          // Append restaurant address (do not overwrite existing addresses)
+          // Append restaurant address as default (do not overwrite existing addresses)
           const addAddressMutation = `
-            mutation customerAddressCreate($customerId: ID!, $address: MailingAddressInput!) {
-              customerAddressCreate(customerId: $customerId, address: $address) {
-                customerAddress { id }
+            mutation customerAddressCreate($customerId: ID!, $address: MailingAddressInput!, $setAsDefault: Boolean!) {
+              customerAddressCreate(customerId: $customerId, address: $address, setAsDefault: $setAsDefault) {
+                address { id }
                 userErrors { field message }
               }
             }
           `;
-          const dupAddrRes = await fetch(`${restBase}/graphql.json`, {
+          await fetch(`${restBase}/graphql.json`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
             body: JSON.stringify({
               query: addAddressMutation,
               variables: {
                 customerId: existingCustomer.id,
+                setAsDefault: true,
                 address: {
                   firstName: first_name,
                   lastName: last_name,
@@ -521,7 +522,7 @@ export default {
                   address1: address.address1,
                   address2: address.address2 || '',
                   city: address.city,
-                  provinceCode: address.province,
+                  province: address.province,
                   zip: address.zip,
                   countryCode: 'US',
                   phone: restaurant_phone,
@@ -529,26 +530,6 @@ export default {
               },
             }),
           });
-          const dupAddrResult = await dupAddrRes.json();
-          const dupAddressId = dupAddrResult?.data?.customerAddressCreate?.customerAddress?.id;
-          if (dupAddressId) {
-            const setDefaultMutation = `
-              mutation customerDefaultAddressUpdate($customerId: ID!, $addressId: ID!) {
-                customerDefaultAddressUpdate(customerId: $customerId, addressId: $addressId) {
-                  customer { id }
-                  userErrors { field message }
-                }
-              }
-            `;
-            await fetch(`${restBase}/graphql.json`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
-              body: JSON.stringify({
-                query: setDefaultMutation,
-                variables: { customerId: existingCustomer.id, addressId: dupAddressId },
-              }),
-            });
-          }
 
           return json({ success: true, customer: { id: existingCustomer.id, email: existingCustomer.email } });
         }
@@ -672,62 +653,38 @@ export default {
           return json({ error: userErrors[0].message, userErrors }, 422);
         }
 
-        // Step 3: Add restaurant address (OTP accounts start with no address)
+        // Step 3: Add restaurant address as default (OTP accounts start with no address)
         const addAddressMutation = `
-          mutation customerAddressCreate($customerId: ID!, $address: MailingAddressInput!) {
-            customerAddressCreate(customerId: $customerId, address: $address) {
-              customerAddress { id }
+          mutation customerAddressCreate($customerId: ID!, $address: MailingAddressInput!, $setAsDefault: Boolean!) {
+            customerAddressCreate(customerId: $customerId, address: $address, setAsDefault: $setAsDefault) {
+              address { id }
               userErrors { field message }
             }
           }
         `;
-        const addAddrRes = await fetch(`${restBase}/graphql.json`, {
+        await fetch(`${restBase}/graphql.json`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
           body: JSON.stringify({
             query: addAddressMutation,
             variables: {
               customerId: `gid://shopify/Customer/${customerId}`,
+              setAsDefault: true,
               address: {
-                firstName:    body.first_name,
-                lastName:     body.last_name,
-                company:      body.restaurant_name,
-                address1:     addr.address1,
-                address2:     addr.address2 || '',
-                city:         addr.city,
-                provinceCode: addr.province,
-                zip:          addr.zip,
-                countryCode:  'US',
-                phone:        body.restaurant_phone,
+                firstName:  body.first_name,
+                lastName:   body.last_name,
+                company:    body.restaurant_name,
+                address1:   addr.address1,
+                address2:   addr.address2 || '',
+                city:       addr.city,
+                province:   addr.province,
+                zip:        addr.zip,
+                countryCode: 'US',
+                phone:      body.restaurant_phone,
               },
             },
           }),
         });
-        const addAddrResult = await addAddrRes.json();
-        const newAddressId = addAddrResult?.data?.customerAddressCreate?.customerAddress?.id;
-
-        // Step 4: Set the new address as default so customer.default_address.company is populated
-        if (newAddressId) {
-          const setDefaultMutation = `
-            mutation customerDefaultAddressUpdate($customerId: ID!, $addressId: ID!) {
-              customerDefaultAddressUpdate(customerId: $customerId, addressId: $addressId) {
-                customer { id }
-                userErrors { field message }
-              }
-            }
-          `;
-          await fetch(`${restBase}/graphql.json`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
-            body: JSON.stringify({
-              query: setDefaultMutation,
-              variables: {
-                customerId: `gid://shopify/Customer/${customerId}`,
-                addressId:  newAddressId,
-              },
-            }),
-          });
-        }
 
         return json({ success: true });
       } catch (err) {
