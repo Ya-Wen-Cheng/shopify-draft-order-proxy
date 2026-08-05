@@ -46,10 +46,11 @@ export function renderInvoiceHtml(order) {
   table { width: 100%; border-collapse: collapse; margin-top: 16px; }
   th, td { border-bottom: 1px solid #ccc; padding: 8px; text-align: left; font-size: 13px; vertical-align: top; }
   .weight-note { font-size: 11px; color: #555; }
-  .summary { margin-top: 16px; width: 260px; margin-left: auto; }
+  .invoice-footer-row { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 24px; }
+  .summary { width: 260px; flex-shrink: 0; }
   .summary td { border: none; padding: 4px 8px; }
-  .signature { margin-top: 60px; }
-  .signature-line { border-top: 1px solid #333; width: 300px; margin-top: 40px; }
+  .signature { flex: 1; padding-right: 32px; }
+  .signature-line { border-top: 1px solid #333; width: 260px; margin-top: 40px; }
   thead { display: table-header-group; }
   tr { break-inside: avoid; page-break-inside: avoid; }
   .invoice-footer { page-break-inside: avoid; }
@@ -62,7 +63,10 @@ export function renderInvoiceHtml(order) {
 </style>
 </head>
 <body>
-  <button class="print-btn no-print" onclick="window.print()">Print</button>
+  <div class="no-print" style="margin-bottom:12px;display:flex;align-items:center;gap:12px;">
+    <button class="print-btn" onclick="window.print()" style="margin:0;">Print</button>
+    <span style="font-size:12px;color:#888;">Tip: In the print dialog, uncheck <strong>Headers and footers</strong> to hide the browser URL and page numbers.</span>
+  </div>
   <div id="invoice-header" style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
     <div>
       <h1 style="margin:0 0 4px;">Invoice — ${escapeHtml(order.name)}</h1>
@@ -89,22 +93,28 @@ export function renderInvoiceHtml(order) {
   </table>
 
   <div class="invoice-footer">
-    <table class="summary">
-      <tr><td>Subtotal</td><td>$${escapeHtml(order.subtotal_price || '0.00')}</td></tr>
-      <tr><td>Delivery</td><td>$${escapeHtml(deliveryFee)}</td></tr>
-      <tr><td>Tax</td><td>$${escapeHtml(order.total_tax || '0.00')}</td></tr>
-      <tr><td><strong>Total</strong></td><td><strong>$${escapeHtml(order.total_price || '0.00')}</strong></td></tr>
-    </table>
-    <div class="signature">
-      <div class="signature-line"></div>
-      <div>Customer Signature</div>
+    <div class="invoice-footer-row">
+      <div class="signature">
+        <div class="signature-line"></div>
+        <div>Customer Signature</div>
+      </div>
+      <table class="summary">
+        <tr><td>Subtotal</td><td>$${escapeHtml(order.subtotal_price || '0.00')}</td></tr>
+        <tr><td>Delivery</td><td>$${escapeHtml(deliveryFee)}</td></tr>
+        <tr><td>Tax</td><td>$${escapeHtml(order.total_tax || '0.00')}</td></tr>
+        <tr><td><strong>Total</strong></td><td><strong>$${escapeHtml(order.total_price || '0.00')}</strong></td></tr>
+      </table>
     </div>
   </div>
 
 <script>
 (function () {
-  // Usable page height in CSS px: 11in minus 0.5in top + 0.5in bottom margins at 96dpi
-  var PAGE_H = (11 - 1) * 96;
+  // Usable page height in CSS px.
+  // Full page: 11in × 96dpi = 1056px. Margins: 0.5in × 2 = 96px → content area = 960px.
+  // Chrome's default "Headers and footers" consume ~80px, and narrow print width (720px)
+  // causes text to wrap more than at screen width, making rows taller than measured.
+  // We use 820px (≈85% of 960px) as a conservative threshold to prevent overflow.
+  var PAGE_H = 820;
   var THEAD_HTML = '<thead><tr><th>Item</th><th>Qty</th><th>Price</th><th>Line Total</th></tr></thead>';
 
   var savedBodyHTML = null;
@@ -126,12 +136,13 @@ export function renderInvoiceHtml(order) {
     var rows = Array.from(document.querySelectorAll('#line-items-body tr'));
     if (rows.length === 0) return;
 
-    // Measure heights before any DOM changes
     var headerH = document.getElementById('invoice-header').getBoundingClientRect().height;
     var customerH = document.getElementById('customer-block').getBoundingClientRect().height;
     var theadH = document.querySelector('thead').getBoundingClientRect().height;
     var footerH = document.querySelector('.invoice-footer').getBoundingClientRect().height;
-    var rowHeights = rows.map(function (r) { return r.getBoundingClientRect().height; });
+    // Add 20% to each row height to compensate for text wrapping at print width (720px)
+    // being tighter than the screen width where we measure.
+    var rowHeights = rows.map(function (r) { return r.getBoundingClientRect().height * 1.2; });
 
     // Check if content fits on one page (account for footer on single page)
     var totalH = headerH + customerH + theadH + footerH;
