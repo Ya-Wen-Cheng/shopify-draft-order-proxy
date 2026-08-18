@@ -17,12 +17,13 @@ function shopifyHeaders(token) {
 // ── GET /pickup/data ────────────────────────────────────────────────────────
 
 export async function getPickupData(restBase, token) {
-  // Parallel fetch: open draft orders tagged draft-order-tab + real orders tagged sourced
-  const [openRes, sourcedRes] = await Promise.all([
+  // Parallel fetch: open + invoice_sent draft orders tagged draft-order-tab + real orders tagged sourced
+  const [openRes, invoiceSentRes, sourcedRes] = await Promise.all([
     fetch(`${restBase}/draft_orders.json?status=open&limit=250`, { headers: shopifyHeaders(token) }),
+    fetch(`${restBase}/draft_orders.json?status=invoice_sent&limit=250`, { headers: shopifyHeaders(token) }),
     fetch(`${restBase}/orders.json?tag=sourced&limit=250`, { headers: shopifyHeaders(token) }),
   ]);
-  const [openData, sourcedData] = await Promise.all([openRes.json(), sourcedRes.json()]);
+  const [openData, invoiceSentData, sourcedData] = await Promise.all([openRes.json(), invoiceSentRes.json(), sourcedRes.json()]);
 
   if (!openRes.ok) {
     const err = new Error(JSON.stringify(openData.errors || openData));
@@ -31,7 +32,10 @@ export async function getPickupData(restBase, token) {
   }
 
   const hasTag = order => (order.tags || '').split(',').map(t => t.trim()).includes('draft-order-tab');
-  const openOrders = (openData.draft_orders || []).filter(hasTag);
+  const openOrders = [
+    ...(openData.draft_orders || []),
+    ...(invoiceSentData.draft_orders || []),
+  ].filter(hasTag);
   // Exclude already-delivered orders from the pickup list
   const sourcedOrders = (sourcedData.orders || []).filter(order => {
     const tags = (order.tags || '').split(',').map(t => t.trim());
