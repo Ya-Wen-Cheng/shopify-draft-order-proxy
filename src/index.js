@@ -843,7 +843,7 @@ export default {
             country:    addr.country    || 'US',
             zip:        addr.zip        || '',
           },
-          tags: [cart.tags, cart.paymentMethod?.id].filter(Boolean).join(', '),
+          tags: ['draft-order-tab', cart.tags, cart.paymentMethod?.id].filter(Boolean).join(', '),
           ...(note                 && { note }),
           // Change C: Zero out shipping_line.price when freeShipping is true
           ...(cart.shippingLine && {
@@ -881,18 +881,61 @@ export default {
 
         const result = await res.json();
 
-        // Send draft order invoice via Shopify (non-blocking)
+        // Send draft order invoice to customer + team notification (non-blocking)
         if (res.status === 201 && result.draft_order) {
-          ctx.waitUntil(
-            fetch(`${restBase}/draft_orders/${result.draft_order.id}/send_invoice.json`, {
+          const do_ = result.draft_order;
+          ctx.waitUntil(Promise.all([
+            // Customer invoice via Shopify
+            fetch(`${restBase}/draft_orders/${do_.id}/send_invoice.json`, {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/json',
                 'X-Shopify-Access-Token': token,
               },
               body: JSON.stringify({ draft_order_invoice: {} }),
-            }).catch(err => console.error('[Invoice] Failed to send:', err))
-          );
+            }).catch(err => console.error('[Invoice] Failed to send:', err)),
+
+            // Team notification email
+            (() => {
+              const customerName = [do_.customer?.first_name, do_.customer?.last_name].filter(Boolean).join(' ') || do_.email;
+              const pickupUrl    = `${new URL(request.url).origin}/pickup#order-${do_.id}`;
+              const itemLines    = (do_.line_items || [])
+                .map(li => `  • ${li.title} × ${li.quantity}`)
+                .join('\n');
+              const itemHtml     = (do_.line_items || [])
+                .map(li => `<li>${li.title} &times; ${li.quantity}</li>`)
+                .join('');
+
+              return fetch('https://api.resend.com/emails', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${env.RESEND_API_KEY}`,
+                },
+                body: JSON.stringify({
+                  from:    'AIGO Orders <orders@my-aigo.com>',
+                  to:      ['info@my-aigo.com'],
+                  subject: `New order ${do_.name} — ${customerName}`,
+                  text: [
+                    `New draft order received: ${do_.name}`,
+                    `Customer: ${customerName} <${do_.email}>`,
+                    '',
+                    'Items:',
+                    itemLines,
+                    '',
+                    `View in Pickup Assistant: ${pickupUrl}`,
+                  ].join('\n'),
+                  html: `
+                    <p><strong>New draft order received: ${do_.name}</strong></p>
+                    <p>Customer: ${customerName} &lt;<a href="mailto:${do_.email}">${do_.email}</a>&gt;</p>
+                    <p><strong>Items:</strong></p>
+                    <ul>${itemHtml}</ul>
+                    <p><a href="${pickupUrl}">View in Pickup Assistant</a></p>
+                  `,
+                }),
+              }).catch(err => console.error('[TeamEmail] Failed to send:', err));
+            })(),
+          ]));
         }
 
         return json(result, res.status);

@@ -21,7 +21,17 @@
 	},
 	"migrations": [
 		{ "tag": "v1", "new_sqlite_classes": ["CostChangeHandler"] }
-	]
+	],
+	"env": {
+		"dev": {
+			"name": "shopify-draft-order-proxy-dev",
+			"durable_objects": {
+				"bindings": [
+					{ "name": "COST_CHANGE_HANDLER", "class_name": "CostChangeHandler" }
+				]
+			}
+		}
+	}
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

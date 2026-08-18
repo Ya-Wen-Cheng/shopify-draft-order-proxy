@@ -91,14 +91,21 @@ var selectedOrderId = null;
 var printedOrders = {};
 var SESSION_VIEW_KEY = 'pickup_view_order';
 
-// Restore view from sessionStorage on load/refresh
+// Restore view from sessionStorage on load/refresh, or honour #order-{id} hash from email link
 (function () {
-  var saved = sessionStorage.getItem(SESSION_VIEW_KEY);
-  if (saved) { selectedOrderId = Number(saved); currentView = 'detail'; }
+  var hash = location.hash.match(/^#order-(\\d+)$/);
+  if (hash) {
+    selectedOrderId = Number(hash[1]);
+    currentView = 'detail';
+    sessionStorage.setItem(SESSION_VIEW_KEY, hash[1]);
+  } else {
+    var saved = sessionStorage.getItem(SESSION_VIEW_KEY);
+    if (saved) { selectedOrderId = Number(saved); currentView = 'detail'; }
+  }
 })();
 
 window.addEventListener('popstate', function () {
-  var m = location.hash.match(/^#order-(\d+)$/);
+  var m = location.hash.match(/^#order-(\\d+)$/);
   if (m) {
     selectedOrderId = Number(m[1]); currentView = 'detail';
     sessionStorage.setItem(SESSION_VIEW_KEY, m[1]);
