@@ -1,0 +1,4 @@
+SHOPIFY_SHOP_NAME=your-store-subdomain
+SHOPIFY_TOKEN=shpat_xxxxxxxxxxxxxxxxxxxx
+SHOPIFY_WEBHOOK_SECRET=xxxxxxxxxxxxxxxxxxxx
+RESEND_API_KEY=re_xxxxxxxxxxxxxxxxxxxx
