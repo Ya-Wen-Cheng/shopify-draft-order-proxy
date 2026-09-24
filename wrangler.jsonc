@@ -29,7 +29,10 @@
 				"bindings": [
 					{ "name": "COST_CHANGE_HANDLER", "class_name": "CostChangeHandler" }
 				]
-			}
+			},
+			"migrations": [
+				{ "tag": "v1", "new_sqlite_classes": ["CostChangeHandler"] }
+			]
 		}
 	}
 	/**
