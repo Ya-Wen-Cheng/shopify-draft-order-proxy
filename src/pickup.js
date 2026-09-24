@@ -1,11 +1,4 @@
-/**
- * Pickup Assistant (G19) — Draft Orders tab
- *
- * Pure helper functions for the /pickup/* routes. Each function takes the
- * Shopify REST base URL + access token and returns either the response data
- * directly (getPickupData) or a { status, body } pair ready to hand back
- * to the caller.
- */
+// Helper functions for the /pickup/* routes.
 
 function shopifyHeaders(token) {
   return {
@@ -14,8 +7,8 @@ function shopifyHeaders(token) {
   };
 }
 
-// ── GET /pickup/data ────────────────────────────────────────────────────────
 
+// GET /pickup/data
 export async function getPickupData(restBase, token) {
   // Parallel fetch: open + invoice_sent draft orders tagged draft-order-tab + real orders tagged sourced
   const [openRes, invoiceSentRes, sourcedRes] = await Promise.all([
@@ -152,8 +145,8 @@ export async function getPickupData(restBase, token) {
   );
 }
 
-// ── PUT /pickup/update ──────────────────────────────────────────────────────
 
+// PUT /pickup/update
 export function applyLineItemUpdate(lineItem, update) {
   if (!update) return lineItem;
 
@@ -221,12 +214,12 @@ export async function updateLineItems(restBase, token, draftOrderId, updates) {
   return { status: 200, body: putData };
 }
 
-// ── PUT /pickup/complete ────────────────────────────────────────────────────
+// PUT /pickup/complete
 
 export async function completeDraftOrder(restBase, token, draftOrderId, changes = []) {
   const results = [];
 
-  // ── Step 1: Separate cost/price changes, detect what actually changed ──────
+  // separate cost/price updates from line-item resolutions
   const costPriceChanges = changes.filter(c => c.type === 'cost_price').map(c => ({
     ...c,
     costChanged: c.cost !== null && c.cost !== undefined && parseFloat(c.cost) !== parseFloat(c.current_cost),
@@ -236,7 +229,7 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
   // All other change types that affect line items directly
   const lineItemChanges = changes.filter(c => c.type !== 'cost_price');
 
-  // ── Step 2: Process cost updates per item (metafield + inventory REST) ─────
+  // update cost per item (metafield + inventory REST)
   for (const change of costPriceChanges) {
     if (!change.costChanged && !change.priceChanged) {
       // No-op: neither cost nor price changed
@@ -334,14 +327,10 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
     }
   }
 
-  // ── Step 3: Single fetch-then-merge for all line-item-level changes ────────
-  // Resolutions (weight/partial/remove/found) and price-only changes are kept in
-  // separate Maps so both can be applied to the same line item without either
-  // overwriting the other (a single combined Map would silently drop one when an
-  // item has both a resolution change and a price change).
-  //
-  // Weight items carry their own price via unit_price on the weight change, so
-  // they are excluded from priceChanges to avoid double-applying a price.
+  // fetch-then-merge: apply resolutions and price changes to current line items.
+  // Two separate Maps (resolutionById, priceById) so an item with both a weight
+  // resolution and a price change doesn't lose one when merged.
+  // Weight items carry their own price, so they're excluded from priceChanges.
   const failedIds = new Set(results.filter(r => !r.success).map(r => r.line_item_id));
   const weightLineItemIds = new Set(lineItemChanges.filter(c => c.type === 'weight').map(c => c.line_item_id));
   const priceChanges = costPriceChanges.filter(
@@ -386,17 +375,8 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
           })
           .filter(Boolean);
 
-        // ── Use GraphQL draftOrderUpdate so price overrides are respected ────────
-        // REST API silently ignores price on variant line items.
-        //
-        // Shopify rules:
-        //   - priceOverride works for both variant and custom line items.
-        //   - originalUnitPrice/originalUnitPriceWithCurrency is ignored when
-        //     variantId is provided; it only applies to custom line items.
-        //   - Keeping variantId preserves product association for sales analytics.
-        //
-        // All variant items (including weight items) keep their variantId and use
-        // priceOverride so Shopify analytics remain accurate.
+        // REST silently ignores price on variant line items — use GraphQL draftOrderUpdate
+        // with priceOverride instead. variantId is kept so Shopify analytics stay accurate.
         const gqlLineItems = mergedLineItems.map(li => {
           const input = {
             quantity: li.quantity,
@@ -450,14 +430,14 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
     }
   }
 
-  // ── Step 4: Completion gating ──────────────────────────────────────────────
+  // only complete if all changes succeeded
   const allSucceeded = results.every(r => r.success);
 
   if (!allSucceeded) {
     return { status: 200, body: { results, all_succeeded: false } };
   }
 
-  // ── Complete the draft order + sourced-tag logic (unchanged) ───────────────
+  // complete the draft order and tag the resulting real order as 'sourced'
   const completeRes = await fetch(`${restBase}/draft_orders/${draftOrderId}/complete.json`, {
     method: 'PUT',
     headers: shopifyHeaders(token),
@@ -505,8 +485,7 @@ export async function completeDraftOrder(restBase, token, draftOrderId, changes 
   return { status: 200, body: { results, all_succeeded: true, draft_order: completeData.draft_order, order_id: orderId, order_name: orderName } };
 }
 
-// ── PUT /pickup/deliver ─────────────────────────────────────────────────────
-// Adds 'delivered' tag to a sourced (real) order, removing it from the pickup list.
+// PUT /pickup/deliver — adds 'delivered' tag to a sourced order, removing it from the pickup list.
 
 export async function markOrderDelivered(restBase, token, orderId) {
   const getRes = await fetch(`${restBase}/orders/${orderId}.json`, { headers: shopifyHeaders(token) });

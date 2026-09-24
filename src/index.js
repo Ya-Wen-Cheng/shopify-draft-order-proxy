@@ -1,22 +1,4 @@
-/**
- * AIGO Shopify Draft Order Proxy
- *
- * Routes:
- *   GET  /?id={draft_order_id}              → fetch a draft order
- *   PUT  /?id={id}&action=complete          → complete a draft order → real order
- *   POST /?action=add-address               → add address to customer profile
- *   POST /?action=signup                    → guest membership signup (creates customer)
- *   POST /?action=activate-membership       → activate membership for logged-in customer
- *   POST /                                  → create a draft order from cart
- *   POST /webhook/cost-update               → Shopify inventory_items/update webhook
- *
- *   GET  /pickup                            → Pickup Assistant mobile UI (G19)
- *   GET  /pickup/data                       → open draft orders tagged draft-order-tab
- *   PUT  /pickup/update                     → update draft order line items (fetch-then-merge)
- *   PUT  /pickup/complete                   → complete draft order, tag resulting order `sourced`
- *   PUT  /pickup/deliver                    → add 'delivered' tag to a sourced order
- *   GET  /invoice/{order_id}                → printable order invoice
- */
+// Routes are documented in README.md.
 
 export { CostChangeHandler } from './cost-change-handler.js';
 
@@ -24,7 +6,7 @@ import { getPickupData, updateLineItems, completeDraftOrder, markOrderDelivered 
 import { renderPickupPage } from './pickup-template.js';
 import { renderInvoiceHtml } from './invoice-template.js';
 
-// ── Membership helpers ────────────────────────────────────────────────────────
+// membership helpers
 
 function normalizeUrl(url) {
   if (!url) return '';
@@ -32,13 +14,7 @@ function normalizeUrl(url) {
   return 'https://' + url;
 }
 
-/**
- * Build a metafields array for the membership namespace.
- * Only includes fields with a non-empty value.
- * `ordering_method` is stored as list.single_line_text_field (JSON array string).
- * `website` is stored as url type.
- * All others are single_line_text_field.
- */
+// ordering_method → list.single_line_text_field; website → url; all others → single_line_text_field
 function buildMetafields(body) {
   const fields = [
     { key: 'business_type',       value: body.business_type },
@@ -126,7 +102,7 @@ function json(data, status = 200) {
   });
 }
 
-// ── Shopify webhook HMAC verification ───────────────────────────────────────
+// webhook HMAC verification
 
 function timingSafeEqual(a, b) {
   if (a.length !== b.length) return false;
@@ -159,7 +135,7 @@ export default {
       return new Response(null, { headers: CORS });
     }
 
-    const shopName   = '6kaf1n-gt';
+    const shopName   = env.SHOPIFY_SHOP_NAME;
     const token      = env.SHOPIFY_TOKEN;
     const restBase   = `https://${shopName}.myshopify.com/admin/api/2024-01`;
 
@@ -167,7 +143,7 @@ export default {
     const id     = url.searchParams.get('id');
     const action = url.searchParams.get('action');
 
-    // ── GET /?action=check-phone — check if phone is already on a customer ──
+    // GET /?action=check-phone
     if (request.method === 'GET' && action === 'check-phone') {
       const phone = url.searchParams.get('phone');
       if (!phone) return json({ error: 'phone param required' }, 400);
@@ -188,7 +164,7 @@ export default {
       return json({ taken });
     }
 
-    // ── POST /webhook/cost-update — Shopify inventory_items/update ─────
+    // POST /webhook/cost-update
     if (request.method === 'POST' && url.pathname === '/webhook/cost-update') {
       const rawBody   = await request.text();
       const hmacHeader = request.headers.get('X-Shopify-Hmac-Sha256');
@@ -224,12 +200,12 @@ export default {
       }
     }
 
-    // ── GET /pickup — Pickup Assistant mobile UI ───────────────────────
+    // GET /pickup
     if (url.pathname === '/pickup' && request.method === 'GET') {
       return new Response(renderPickupPage(), { headers: { ...CORS, 'Content-Type': 'text/html; charset=utf-8' } });
     }
 
-    // ── GET /pickup/data — open draft orders tagged draft-order-tab ───
+    // GET /pickup/data
     if (url.pathname === '/pickup/data' && request.method === 'GET') {
       try {
         const draftOrders = await getPickupData(restBase, token);
@@ -239,7 +215,7 @@ export default {
       }
     }
 
-    // ── PUT /pickup/update — fetch-then-merge line item updates ───────
+    // PUT /pickup/update
     if (url.pathname === '/pickup/update' && request.method === 'PUT') {
       try {
         const body = await request.json();
@@ -254,7 +230,7 @@ export default {
       }
     }
 
-    // ── PUT /pickup/complete — complete draft order, tag order `sourced` ──
+    // PUT /pickup/complete
     if (url.pathname === '/pickup/complete' && request.method === 'PUT') {
       try {
         const body = await request.json();
@@ -269,7 +245,7 @@ export default {
       }
     }
 
-    // ── PUT /pickup/deliver — add 'delivered' tag to a sourced order ──
+    // PUT /pickup/deliver
     if (url.pathname === '/pickup/deliver' && request.method === 'PUT') {
       try {
         const body = await request.json();
@@ -281,7 +257,7 @@ export default {
       }
     }
 
-    // ── GET /invoice/{order_id} — printable invoice ────────────────────
+    // GET /invoice/:order_id
     if (url.pathname.startsWith('/invoice/') && request.method === 'GET') {
       const orderId = url.pathname.slice('/invoice/'.length);
       if (!orderId) return json({ error: 'Missing order id' }, 400);
@@ -303,7 +279,7 @@ export default {
       }
     }
 
-    // ── GET /?id={draft_order_id} ─────────────────────────────────────
+    // GET /?id={id}
     if (request.method === 'GET') {
       if (!id) return json({ error: 'Missing id' }, 400);
 
@@ -321,7 +297,7 @@ export default {
       }
     }
 
-    // ── PUT /?id={id}&action=complete ─────────────────────────────────
+    // PUT /?id={id}&action=complete
     if (request.method === 'PUT' && action === 'complete') {
       if (!id) return json({ error: 'Missing id' }, 400);
 
@@ -340,7 +316,7 @@ export default {
       }
     }
 
-    // ── POST /?action=add-address — add address to customer profile ──────
+    // POST /?action=add-address
     if (request.method === 'POST' && action === 'add-address') {
       try {
         const body = await request.json();
@@ -397,7 +373,7 @@ export default {
       }
     }
 
-    // ── POST /?action=signup — guest membership signup ────────────────
+    // POST /?action=signup
     if (request.method === 'POST' && action === 'signup') {
       let body;
       try {
@@ -628,7 +604,7 @@ export default {
       }
     }
 
-    // ── POST /?action=activate-membership — activate for logged-in customer ──
+    // POST /?action=activate-membership
     if (request.method === 'POST' && action === 'activate-membership') {
       let body;
       try {
@@ -671,7 +647,7 @@ export default {
       }
 
       try {
-        // Step 1: GET current customer to check idempotency
+        // fetch current customer to read existing note
         const getRes = await fetch(`${restBase}/customers/${customerId}.json`, {
           headers: {
             'Content-Type': 'application/json',
@@ -690,7 +666,7 @@ export default {
         // Fix 3: removed idempotency early-return — customerUpdate is safe to call repeatedly.
         const existingNote = getResult.customer.note || '';
 
-        // Step 2: Write metafields + membership-signup note via GraphQL customerUpdate (always)
+        // write metafields and tag customer as member
         const metafields = buildMetafields(body);
 
         const updateMutation = `
@@ -745,7 +721,7 @@ export default {
           return json({ error: userErrors[0].message, userErrors }, 422);
         }
 
-        // Step 3: Add restaurant address as default (OTP accounts start with no address)
+        // add restaurant address as default (OTP accounts start with none)
         const addAddressMutation = `
           mutation customerAddressCreate($customerId: ID!, $address: MailingAddressInput!, $setAsDefault: Boolean!) {
             customerAddressCreate(customerId: $customerId, address: $address, setAsDefault: $setAsDefault) {
@@ -786,7 +762,7 @@ export default {
       }
     }
 
-    // ── POST / — create draft order ───────────────────────────────────
+    // POST / — create draft order
     if (request.method === 'POST') {
       try {
         const cart = await request.json();
@@ -808,7 +784,7 @@ export default {
         }
 
         const draftOrder = {
-          // Change A: Map memberDiscounts to per-line-item applied_discount
+          // per-line-item member discounts
           line_items: (() => {
             const discountMap = {};
             if (Array.isArray(cart.memberDiscounts)) {
@@ -845,7 +821,7 @@ export default {
           },
           tags: ['draft-order-tab', cart.tags, cart.paymentMethod?.id].filter(Boolean).join(', '),
           ...(note                 && { note }),
-          // Change C: Zero out shipping_line.price when freeShipping is true
+          // zero out shipping price for members
           ...(cart.shippingLine && {
             shipping_line: {
               title: cart.shippingLine.title,
@@ -859,7 +835,7 @@ export default {
               price: '0.00',
             },
           }),
-          // Change B: Add order-level applied_discount for promo code
+          // order-level promo discount
           ...(cart.promoAmountCents > 0 && {
             applied_discount: {
               description: cart.promoCode ? `Promo code: ${cart.promoCode}` : 'Promo discount',
