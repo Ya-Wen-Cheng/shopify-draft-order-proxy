@@ -73,19 +73,6 @@ scripts/
 
 **API routes are not RESTful.** Routes currently use query params for dispatch (e.g. `?action=signup`, `?action=complete`). A proper path-based API (`POST /members`, `POST /orders/:id/complete`) is planned but requires coordinated changes across this Worker and the storefront theme.
 
-## Setup
-
-```bash
-npm install
-npx wrangler dev
-```
-
-Copy `.dev.vars.example` to `.dev.vars` and fill in your values:
-
-```bash
-cp .dev.vars.example .dev.vars
-```
-
 ## Tests
 
 ```bash
