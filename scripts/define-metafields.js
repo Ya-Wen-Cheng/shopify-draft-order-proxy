@@ -5,7 +5,7 @@
  * "membership" namespace via the Shopify Admin GraphQL API.
  *
  * Usage:
- *   SHOPIFY_ADMIN_TOKEN=<token> node src/define-metafields.js
+ *   SHOPIFY_ADMIN_TOKEN=<token> SHOPIFY_SHOP_NAME=<subdomain> node scripts/define-metafields.js
  *
  * Safe to re-run — definitions that already exist are skipped (idempotent).
  * Requires Node 18+ (native fetch).
