@@ -1,15 +1,9 @@
-/**
- * CostChangeHandler Durable Object
- *
- * Serializes cost-change processing per inventory_item_id (one DO instance
- * per id), so concurrent webhook deliveries for the same item can't race
- * each other's metafield reads/writes. No durable storage is used — all
- * state lives in Shopify product metafields.
- */
+// Durable Object — one instance per inventory_item_id.
+// Serializes concurrent webhook deliveries so parallel cost updates
+// don't race each other's metafield reads/writes.
+// State lives entirely in Shopify product metafields (no DO storage).
 
-const SHOP_NAME  = '6kaf1n-gt';
 const API_VERSION = '2026-07';
-const GRAPHQL_URL = `https://${SHOP_NAME}.myshopify.com/admin/api/${API_VERSION}/graphql.json`;
 const MAX_RETRIES = 2;
 
 const READ_QUERY = `
@@ -75,10 +69,11 @@ export class CostChangeHandler {
   }
 
   async graphqlRequest(query, variables) {
+    const graphqlUrl = `https://${this.env.SHOPIFY_SHOP_NAME}.myshopify.com/admin/api/${API_VERSION}/graphql.json`;
     let lastError;
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
-        const res = await fetch(GRAPHQL_URL, {
+        const res = await fetch(graphqlUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
