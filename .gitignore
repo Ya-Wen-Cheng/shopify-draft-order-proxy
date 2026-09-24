@@ -170,5 +170,8 @@ dist
 # Symlinks to shopify theme repo
 docs/company
 
+# Internal ops docs
+docs/manual-tests/
+
 # macOS
 .DS_Store

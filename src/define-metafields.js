@@ -11,20 +11,18 @@
  * Requires Node 18+ (native fetch).
  */
 
-const SHOP_DOMAIN = '6kaf1n-gt.myshopify.com'; // must stay in sync with src/index.js
 const API_VERSION = '2025-04';
-const ENDPOINT    = `https://${SHOP_DOMAIN}/admin/api/${API_VERSION}/graphql.json`;
 
-// ── Token ────────────────────────────────────────────────────────────────────
+const token      = process.env.SHOPIFY_ADMIN_TOKEN;
+const shopDomain = process.env.SHOPIFY_SHOP_NAME && `${process.env.SHOPIFY_SHOP_NAME}.myshopify.com`;
+const ENDPOINT   = `https://${shopDomain}/admin/api/${API_VERSION}/graphql.json`;
 
-const token = process.env.SHOPIFY_ADMIN_TOKEN;
-if (!token) {
-  console.error('Error: SHOPIFY_ADMIN_TOKEN environment variable is not set.');
-  console.error('Usage: SHOPIFY_ADMIN_TOKEN=<token> node src/define-metafields.js');
+if (!token || !shopDomain) {
+  console.error('Usage: SHOPIFY_ADMIN_TOKEN=<token> SHOPIFY_SHOP_NAME=<subdomain> node src/define-metafields.js');
   process.exit(1);
 }
 
-// ── Definitions ──────────────────────────────────────────────────────────────
+// definitions
 
 const DEFINITIONS = [
   { key: 'business_type',    name: 'Business Type',                     type: 'single_line_text_field' },
@@ -46,7 +44,7 @@ const DEFINITIONS = [
   { key: 'ordering_method',  name: 'Preferred Ordering Method',         type: 'list.single_line_text_field' },
 ];
 
-// ── GraphQL mutation ─────────────────────────────────────────────────────────
+// GraphQL mutation
 
 const MUTATION = `
   mutation metafieldDefinitionCreate($definition: MetafieldDefinitionInput!) {
@@ -65,7 +63,7 @@ const MUTATION = `
   }
 `;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// helpers
 
 /**
  * Returns true if the userErrors array contains an "already taken" error,
@@ -123,7 +121,7 @@ async function createDefinition(def) {
   return { status: 'created', id: createdDefinition.id };
 }
 
-// ── Main ─────────────────────────────────────────────────────────────────────
+// main
 
 async function main() {
   console.log(`Creating ${DEFINITIONS.length} metafield definitions on ${SHOP_DOMAIN}...\n`);
