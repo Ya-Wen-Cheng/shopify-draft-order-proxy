@@ -24,6 +24,12 @@ This Worker sits between the storefront and the Shopify Admin API, handling the 
 
 ```
 Storefront (Liquid + JS)
+        │  public internet — no secrets
+        ▼
+Cloudflare Worker  ◄─── env secrets (never exposed to browser)
+        │   ├── origin & HMAC validation
+        │   ├── payload transformation
+        │   └── Admin API credential injection
         │
         ├── POST /                              create draft order
         ├── POST /?action=signup                new member signup
@@ -34,13 +40,15 @@ Storefront (Liquid + JS)
                                                         │
                                                  Durable Object
                                                 (per inventory_item_id)
-
-Worker calls out to:
-  Shopify Admin API (REST + GraphQL)
-  Resend (transactional email)
+        │
+        ▼
+Shopify Admin API (REST + GraphQL)
+Resend (transactional email)
 ```
 
 ## Notable decisions
+
+**Admin API credentials never reach the browser.** Shopify's Admin API token has full write access to the store — products, orders, customers. Calling it directly from the storefront would expose that token in client-side JavaScript. The Worker acts as a secure proxy: the storefront sends requests with no secrets attached, and the Worker injects the Admin API token server-side at the edge before forwarding to Shopify.
 
 **Durable Objects for cost webhooks.** Shopify can deliver `inventory_items/update` multiple times for the same item within milliseconds. A Durable Object keyed on `inventory_item_id` serializes execution, preventing concurrent deliveries from racing each other's metafield reads.
 
@@ -72,13 +80,10 @@ npm install
 npx wrangler dev
 ```
 
-Create `.dev.vars` with:
+Copy `.dev.vars.example` to `.dev.vars` and fill in your values:
 
-```
-SHOPIFY_SHOP_NAME=your-store-subdomain
-SHOPIFY_TOKEN=...
-SHOPIFY_WEBHOOK_SECRET=...
-RESEND_API_KEY=...
+```bash
+cp .dev.vars.example .dev.vars
 ```
 
 ## Tests
