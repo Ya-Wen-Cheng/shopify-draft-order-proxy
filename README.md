@@ -1,10 +1,10 @@
 # shopify-draft-order-proxy
 
-A Cloudflare Worker that handles backend operations for a B2B restaurant supply store built on Shopify. Running in production.
+A Cloudflare Worker that handles backend operations for [AIGO](https://www.my-aigo.com), a B2B restaurant supply store built on Shopify. Running in production.
 
 ## Why it exists
 
-Shopify's checkout is designed for retail. The store's customers are restaurants — they order on net terms, pay on delivery, and their orders often need to be adjusted on-site when a product is unavailable or sold by weight. That workflow doesn't fit Shopify's native checkout.
+Shopify's checkout is designed for retail. AIGO's customers are restaurants — they order on net terms, pay on delivery, and their orders often need to be adjusted on-site when a product is unavailable or sold by weight. That workflow doesn't fit Shopify's native checkout.
 
 This Worker sits between the storefront and the Shopify Admin API, handling the parts Shopify doesn't do out of the box.
 
@@ -47,6 +47,23 @@ Worker calls out to:
 **GraphQL for draft order completion.** The REST API silently ignores `price` on variant line items. The pickup completion step uses `draftOrderUpdate` via GraphQL instead, which respects `priceOverride` while keeping `variantId` intact for Shopify analytics.
 
 **Phone conflict retry.** When Shopify rejects a customer creation because the phone number is already taken, the Worker retries without the phone field rather than surfacing an error to the customer — a common edge case when restaurants share a number across accounts.
+
+## File structure
+
+```
+src/
+  index.js              — Worker entry point; all HTTP routing and membership logic
+  pickup.js             — Shopify API calls for the pickup assistant (read, update, complete, deliver)
+  pickup-template.js    — Server-rendered HTML for the /pickup UI
+  invoice-template.js   — Server-rendered print-ready invoice HTML
+  cost-change-handler.js — Durable Object; serializes concurrent cost webhook deliveries per SKU
+scripts/
+  define-metafields.js  — One-off script to create the 16 customer metafield definitions in Shopify
+```
+
+## Known limitations / planned work
+
+**API routes are not RESTful.** Routes currently use query params for dispatch (e.g. `?action=signup`, `?action=complete`). A proper path-based API (`POST /members`, `POST /orders/:id/complete`) is planned but requires coordinated changes across this Worker and the storefront theme.
 
 ## Setup
 

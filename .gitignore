@@ -172,6 +172,7 @@ docs/company
 
 # Internal ops docs
 docs/manual-tests/
+docs/superpowers/
 
 # macOS
 .DS_Store
