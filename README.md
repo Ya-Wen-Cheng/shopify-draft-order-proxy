@@ -10,15 +10,15 @@ This Worker sits between the storefront and the Shopify Admin API, handling the 
 
 ## What it does
 
-**Draft order checkout** — Creates draft orders from cart data, applies per-line-item membership discounts, sends the customer a Shopify invoice, and fires a team notification email via Resend.
+**Draft order checkout** — Shopify's native checkout requires immediate payment, which doesn't work for restaurants ordering on net terms and paying on delivery. This Worker creates draft orders from cart data, applies per-line-item membership discounts, sends the customer a Shopify invoice, and fires a team notification email via Resend.
 
-**Membership signup and activation** — Two paths: new customers signing up (`POST /?action=signup`), and existing customers activating membership from their account page (`POST /?action=activate-membership`). Both write 16 customer metafields via GraphQL, set a default address, and handle phone conflicts (restaurants often share a number across multiple accounts).
+**Membership signup and activation** — B2B customers need more than a name and email — the store tracks business type, kitchen contacts, emergency contacts, and preferred ordering method across 16 custom metafields. Two paths: new customers signing up, and existing customers activating membership from their account page. Both write the metafields via GraphQL, set a default address, and handle phone conflicts (restaurants often share a number across multiple accounts).
 
-**Pickup assistant** — A mobile UI at `/pickup` for warehouse staff filling orders. Staff can record actual weights for by-weight items, adjust prices, or mark items unavailable. On completion it converts the draft order to a real Shopify order tagged `sourced`.
+**Pickup assistant** — AIGO sells produce and protein by weight, so the exact price of an order isn't known until delivery. Warehouse staff use a mobile UI at `/pickup` to record actual weights, adjust per-item prices, and mark anything unavailable. On completion it converts the draft order to a real Shopify order.
 
-**Invoice** — `GET /invoice/:order_id` returns a print-ready HTML page for any order.
+**Invoice** — B2B customers sign a paper invoice on delivery. `GET /invoice/:order_id` returns a print-ready HTML page matching the store's invoice format, paginated correctly for multi-page orders.
 
-**Cost tracking** — A Shopify `inventory_items/update` webhook triggers a Durable Object per inventory item. The DO serializes concurrent deliveries for the same SKU so parallel webhook calls don't race each other's metafield reads and writes.
+**Cost tracking** — When supplier costs change, the team needs a log of what changed, when, and why — Shopify has no native cost history. A `inventory_items/update` webhook triggers a Durable Object per inventory item that appends to a cost change log in the product's metafields. The DO serializes concurrent webhook deliveries so parallel calls don't race each other's reads and writes.
 
 ## Architecture
 
