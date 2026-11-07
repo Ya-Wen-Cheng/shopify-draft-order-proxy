@@ -97,6 +97,10 @@ describe('GET /pickup/data', () => {
       if (url.includes('/orders.json')) {
         return Promise.resolve(new Response(JSON.stringify({ orders: [] }), { status: 200 }));
       }
+      // getPickupData also fetches status=invoice_sent; return none so orders aren't duplicated
+      if (url.includes('status=invoice_sent')) {
+        return Promise.resolve(new Response(JSON.stringify({ draft_orders: [] }), { status: 200 }));
+      }
       return Promise.resolve(new Response(JSON.stringify(draftOrdersResponse), { status: 200 }));
     });
   }

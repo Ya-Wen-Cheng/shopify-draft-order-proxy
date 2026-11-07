@@ -548,11 +548,26 @@ describe('POST /?action=signup', () => {
 describe('POST /?action=activate-membership', () => {
   beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
 
+  // Handler validates the same required fields as signup, so every request
+  // carries a complete payload; individual tests override only customer_id.
+  const baseActivate = {
+    first_name: 'Jane',
+    last_name: 'Doe',
+    restaurant_name: 'Joe Cafe',
+    restaurant_phone: '555-9999',
+    business_type: 'restaurant',
+    business_subtype: 'casual',
+    emergency_name: 'Bob',
+    emergency_phone: '555-0000',
+    ordering_method: ['online'],
+    address: { address1: '123 Main St', city: 'Los Angeles', province: 'CA', zip: '90001' },
+  };
+
   function activateRequest(body) {
     return new Request('http://example.com/?action=activate-membership', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...baseActivate, ...body }),
     });
   }
 
@@ -592,7 +607,7 @@ describe('POST /?action=activate-membership', () => {
     const res = await call(activateRequest({ customer_id: 5001 }));
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data).toEqual({ success: true });
+    expect(data).toEqual({ success: true, phone_skipped: false });
 
     // First call must be REST GET
     const [getUrl, getOpts] = globalThis.fetch.mock.calls[0];
@@ -626,10 +641,10 @@ describe('POST /?action=activate-membership', () => {
     const res = await call(activateRequest({ customer_id: 5001 }));
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data).toEqual({ success: true });
+    expect(data).toEqual({ success: true, phone_skipped: false });
 
-    // Both calls must have been made (GET + GraphQL customerUpdate)
-    expect(globalThis.fetch.mock.calls).toHaveLength(2);
+    // Full chain ran: GET + customerUpdate + customerAddressCreate + email-marketing update
+    expect(globalThis.fetch.mock.calls).toHaveLength(4);
     const [, gqlOpts] = globalThis.fetch.mock.calls[1];
     const gqlBody = JSON.parse(gqlOpts.body);
     expect(gqlBody.query).toContain('customerUpdate');
