@@ -76,7 +76,21 @@ scripts/
 ## Tests
 
 ```bash
-npm test
+npm test               # watch mode
+npm run test:coverage  # one run + coverage report
 ```
 
-Vitest with the `cloudflare:test` miniflare pool. Covers HMAC verification, membership field validation, phone conflict retry, and pickup completion logic.
+Vitest with the `cloudflare:test` miniflare pool; 196 tests across 7 spec files. Covers HMAC verification, membership signup/activation validation and phone-conflict retry, draft-order creation, the pickup flow (data, update, batched cost/price changes, complete, deliver), invoice rendering and HTML escaping, and the cost-change Durable Object. Each endpoint has sad-path tests (missing fields, malformed JSON, Shopify errors, unreachable Shopify) alongside the happy path.
+
+Coverage of `src/` (istanbul), measured 2026-11-07:
+
+| | Lines | Branches | Functions |
+|---|---|---|---|
+| All files | 96.4% | 91.0% | 96.2% |
+| `index.js` | 94.6% | 88.8% | 85.7% |
+| `pickup.js` | 100% | 94.8% | 100% |
+| `invoice-template.js` | 100% | 100% | 100% |
+
+Not covered: a few `index.js` branches (the draft-order error log, some defensive fallbacks), a handful of `cost-change-handler.js` branches, and some defensive branches in `pickup.js`. These numbers are a snapshot; rerun `npm run test:coverage` for current values.
+
+`npm run deploy` runs the suite first and aborts on any failure. GitHub Actions also runs it on every PR and on pushes to `main`.
