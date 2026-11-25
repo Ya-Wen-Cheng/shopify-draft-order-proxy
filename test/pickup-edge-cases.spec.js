@@ -287,6 +287,8 @@ describe('completeDraftOrder — failures and edge cases', () => {
     const out = await completeDraftOrder(BASE, TOKEN, 5, [{ type: 'remove', line_item_id: 10, title: 'Item' }]);
     expect(out.body.all_succeeded).toBe(false);
     expect(out.body.results[0]).toMatchObject({ line_item_id: 10, success: false });
+    // Shopify's error must surface, not a TypeError from reading a missing draft_order (Stryker survivor)
+    expect(out.body.results[0].error).toContain('boom');
     expect(callsTo('/complete.json')).toHaveLength(0);
   });
 
@@ -441,6 +443,53 @@ describe('completeDraftOrder — failures and edge cases', () => {
     ]);
     const update = callsTo('/graphql.json', 'POST').map(([, o]) => gqlBody(o)).find(b => b.query.includes('draftOrderUpdate'));
     expect(update.variables.input.lineItems[0].priceOverride.amount).toBe('10.00');
+  });
+
+  // ── priceChanged detection (found by Stryker: mutating it to `true` survived) ──
+  // A cost_price change with no real price/cost difference must be a no-op:
+  // no variant PUT, no draft merge, and a single success result.
+  it.each([
+    ['price is null', null],
+    ['price is undefined', undefined],
+    ['price equals current_price in a different format', '2'],
+  ])('given a cost_price change where %s and cost is unchanged, treats it as a no-op', async (_label, price) => {
+    mockRoutes([completeOk, gqlOrderLookup(null)]);
+    const out = await completeDraftOrder(BASE, TOKEN, 5, [
+      { type: 'cost_price', line_item_id: 10, title: 'Item', variant_id: 77, price, current_price: '2.00', cost: null },
+    ]);
+    expect(out.body.results).toEqual([{ line_item_id: 10, title: 'Item', success: true }]);
+    expect(callsTo('/variants/')).toHaveLength(0);
+    // nothing to merge, so the draft is never fetched or updated before completion
+    expect(callsTo('/draft_orders/5.json')).toHaveLength(0);
+    expect(callsTo('/complete.json', 'PUT')).toHaveLength(1);
+  });
+
+  // ── failedIds (found by Stryker: removing the whole check survived) ──
+  // Item 10's price update fails in step 2, but it's also in the merge via a 'found'
+  // resolution. Whatever the merge does, item 10 must keep exactly one result (the
+  // original failure) and its failed price must not be merged into the draft.
+  const mergeOk = ['POST', '/graphql.json', () => res({ data: { draftOrderUpdate: { userErrors: [] } } })];
+  it.each([
+    ['the merge succeeds', [draftGet([li({ variant_id: 77 })]), mergeOk]],
+    ['draftOrderUpdate returns userErrors', [draftGet([li({ variant_id: 77 })]),
+      ['POST', '/graphql.json', () => res({ data: { draftOrderUpdate: { userErrors: [{ message: 'nope' }] } } })]]],
+    ['the draft GET fails', [['GET', '/draft_orders/5.json', () => res({ errors: 'boom' }, 500)]]],
+    ['the merge request throws', [['GET', '/draft_orders/5.json', () => Promise.reject(new Error('network down'))]]],
+  ])('given an item whose price update failed and %s, reports only the original failure', async (_label, mergeRoutes) => {
+    mockRoutes([['PUT', '/variants/77.json', () => res({ errors: 'locked' }, 422)], ...mergeRoutes]);
+    const out = await completeDraftOrder(BASE, TOKEN, 5, [
+      { type: 'cost_price', line_item_id: 10, title: 'Item', variant_id: 77, price: '9.00', current_price: '2.00' },
+      { type: 'found', line_item_id: 10, title: 'Item' },
+    ]);
+    const forItem = out.body.results.filter(r => r.line_item_id === 10);
+    expect(forItem).toHaveLength(1);
+    expect(forItem[0]).toMatchObject({ success: false });
+    expect(forItem[0].error).toContain('locked');
+    expect(out.body.all_succeeded).toBe(false);
+    expect(callsTo('/complete.json')).toHaveLength(0);
+    // when the merge does run, the failed 9.00 price must not reach the draft
+    const update = callsTo('/graphql.json', 'POST').map(([, o]) => gqlBody(o)).find(b => b.query.includes('draftOrderUpdate'));
+    if (update) expect(update.variables.input.lineItems[0].priceOverride.amount).toBe('2.00');
   });
 });
 
