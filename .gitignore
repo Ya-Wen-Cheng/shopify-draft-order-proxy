@@ -176,3 +176,7 @@ docs/superpowers/
 
 # macOS
 .DS_Store
+
+# Stryker mutation testing (sandboxes + HTML report)
+.stryker-tmp/
+reports/
