@@ -118,6 +118,7 @@ describe('CostChangeHandler', () => {
     const res = await sendWebhook({ id: 123, cost: '5.00' });
 
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, unchanged: true });
     expect(globalThis.fetch).toHaveBeenCalledTimes(1); // read only, no write
   });
 
@@ -127,6 +128,7 @@ describe('CostChangeHandler', () => {
     const res = await sendWebhook({ id: 123, cost: '5.00' });
 
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, initialized: true });
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
 
     const body = getWriteMutationBody();
@@ -145,6 +147,7 @@ describe('CostChangeHandler', () => {
     const res = await sendWebhook({ id: 123, cost: '26.49' });
 
     expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, logged: true });
     const body = getWriteMutationBody();
     const log = body.variables.metafields.find(m => m.key === 'cost_change_log').value;
     expect(log).toMatch(/^\d{4}-\d{2}-\d{2} \| \$24\.99 → \$26\.49 \| manual$/);
@@ -214,6 +217,86 @@ describe('CostChangeHandler', () => {
     const res = await sendWebhook({ id: 123, cost: '5.00' });
 
     expect(res.status).toBe(500);
+    // the HTTP status must surface, not a JSON parse error from reading the 500 body (Stryker survivor)
+    expect((await res.json()).error).toBe('Shopify API returned 500');
     expect(globalThis.fetch).toHaveBeenCalledTimes(3); // 1 initial + 2 retries
+  });
+
+  // ── Gaps found by Stryker (mutation score was 54.8%) ──
+
+  it('retries GraphQL-level errors on a 200 response, then returns 500 with the GraphQL error', async () => {
+    globalThis.fetch.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ errors: [{ message: 'Throttled' }] }), { status: 200 })));
+
+    const res = await sendWebhook({ id: 123, cost: '5.00' });
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toContain('Throttled');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries when the request itself throws, then returns 500 with the network error', async () => {
+    globalThis.fetch.mockRejectedValue(new Error('network down'));
+
+    const res = await sendWebhook({ id: 123, cost: '5.00' });
+
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toBe('network down');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('recovers when a retry succeeds after a failed attempt', async () => {
+    let n = 0;
+    globalThis.fetch.mockImplementation(() => {
+      n += 1;
+      return Promise.resolve(n === 1
+        ? new Response('Bad Gateway', { status: 502 })
+        : readResponse({ lastKnownCost: { '456': '5.00' } }));
+    });
+
+    const res = await sendWebhook({ id: 123, cost: '5.00' });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, unchanged: true });
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns 404 and writes nothing when the inventory item has no product', async () => {
+    globalThis.fetch.mockImplementation(() =>
+      Promise.resolve(new Response(JSON.stringify({ data: { inventoryItem: null } }), { status: 200 })));
+
+    const res = await sendWebhook({ id: 123, cost: '5.00' });
+
+    expect(res.status).toBe(404);
+    expect((await res.json()).error).toBe('Inventory item not found');
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the right inventory item and writes both metafields to custom/* with the right types', async () => {
+    mockReadThenWrite({ lastKnownCost: { '456': '4.00' } });
+
+    await sendWebhook({ id: 123, cost: '5.00' });
+
+    const [readUrl, readOpts] = globalThis.fetch.mock.calls[0];
+    expect(readUrl).toMatch(/^https:\/\/.+\.myshopify\.com\/admin\/api\/[\d-]+\/graphql\.json$/);
+    expect(readOpts.method).toBe('POST');
+    // the DO reads its own env; vitest.config.js pins it to a fake token, never the .dev.vars one
+    expect(readOpts.headers['X-Shopify-Access-Token']).toBe('test-token');
+    expect(JSON.parse(readOpts.body).variables).toEqual({ id: 'gid://shopify/InventoryItem/123' });
+    // a wrong namespace/type would silently write to a different metafield (Stryker survivors)
+    expect(getWriteMutationBody().variables.metafields).toEqual([
+      expect.objectContaining({ ownerId: 'gid://shopify/Product/789', namespace: 'custom', key: 'last_known_cost', type: 'json' }),
+      expect.objectContaining({ ownerId: 'gid://shopify/Product/789', namespace: 'custom', key: 'cost_change_log', type: 'multi_line_text_field' }),
+    ]);
+  });
+
+  it('returns 400 when the DO receives a non-JSON body', async () => {
+    // index.js parses JSON before forwarding, so hit the DO stub directly
+    const stub = env.COST_CHANGE_HANDLER.get(env.COST_CHANGE_HANDLER.idFromName('bad-json'));
+    const res = await stub.fetch('https://cost-change-handler/', { method: 'POST', body: 'not json' });
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'Invalid JSON' });
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 });
