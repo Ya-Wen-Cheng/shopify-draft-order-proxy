@@ -8,5 +8,8 @@ export default {
   mutate: ["src/pickup.js"],
   // docs/company is a symlink outside the repo that Stryker can't copy into its sandbox
   ignorePatterns: ["docs"],
+  // Delete sandboxes even when a run fails (default only cleans on success), so stale copies
+  // never pile up. To keep one for debugging: `npx stryker run --cleanTempDir false`.
+  cleanTempDir: "always",
   reporters: ["clear-text", "html", "progress"],
 };
